@@ -22,7 +22,7 @@ on:
   workflow_call:
     inputs:
       image_ref:
-        description: 'Image reference to build and scan, e.g. myapp:${{ github.sha }}'
+        description: 'Image reference to build and scan, e.g. myapp:<git-sha>'
         type: string
         required: true
       dockerfile_path:
