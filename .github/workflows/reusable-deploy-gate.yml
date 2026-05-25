@@ -233,28 +233,51 @@ jobs:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           DECISION: ${{ steps.decide.outputs.decision }}
           SCORE: ${{ steps.decide.outputs.score }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          SERVER_URL: ${{ github.server_url }}
+          RUN_ID: ${{ github.run_id }}
         run: |
-          color=$([ "$DECISION" = "pass" ] && echo "#2eb886" || echo "#d63333")
-          payload=$(cat <<JSON
-          {
-            "attachments": [{
-              "color": "$color",
-              "blocks": [
-                {
-                  "type": "section",
-                  "text": {
-                    "type": "mrkdwn",
-                    "text": "*Deploy Gate — ${{ inputs.environment }}*\n*Decision:* $DECISION\n*Score:* $SCORE/100\n*Repo:* ${{ github.repository }}\n*Commit:* \`${{ github.sha }}\`\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run>"
-                  }
-                }
-              ]
-            }]
-          }
-          JSON
+          # Build the Slack payload in Python so we don't have to fight YAML's
+          # 200-column lint budget with a single-line JSON string.
+          python3 - <<'PY'
+          import json, os, urllib.request
+
+          decision = os.environ["DECISION"]
+          color = "#2eb886" if decision == "pass" else "#d63333"
+          run_url = (
+              f"{os.environ['SERVER_URL']}/{os.environ['REPO']}"
+              f"/actions/runs/{os.environ['RUN_ID']}"
           )
-          curl -sS -X POST -H 'Content-Type: application/json' \
-            --data "$payload" \
-            "$SLACK_WEBHOOK_URL" > /dev/null
+          text = (
+              f"*Deploy Gate — {os.environ['ENVIRONMENT']}*\n"
+              f"*Decision:* {decision}\n"
+              f"*Score:* {os.environ['SCORE']}/100\n"
+              f"*Repo:* {os.environ['REPO']}\n"
+              f"*Commit:* `{os.environ['SHA']}`\n"
+              f"<{run_url}|View run>"
+          )
+          payload = {
+              "attachments": [
+                  {
+                      "color": color,
+                      "blocks": [
+                          {"type": "section",
+                           "text": {"type": "mrkdwn", "text": text}}
+                      ],
+                  }
+              ]
+          }
+          req = urllib.request.Request(
+              os.environ["SLACK_WEBHOOK_URL"],
+              data=json.dumps(payload).encode("utf-8"),
+              headers={"Content-Type": "application/json"},
+              method="POST",
+          )
+          with urllib.request.urlopen(req, timeout=10) as resp:
+              resp.read()
+          PY
 
       - name: Upload deploy gate report
         if: always()

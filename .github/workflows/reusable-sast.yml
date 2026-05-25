@@ -48,9 +48,12 @@ on:
         required: false
 
 # Cancel earlier in-flight runs of this workflow for the same ref — useful when
-# multiple pushes land in quick succession on a long-running PR.
+# multiple pushes land in quick succession on a long-running PR. We include
+# `inputs.working_directory` in the group so callers that invoke this
+# workflow multiple times in a single pipeline (e.g. monorepo with multiple
+# subprojects) don't cancel each other's runs.
 concurrency:
-  group: sast-${{ github.workflow }}-${{ github.ref }}
+  group: sast-${{ github.workflow }}-${{ github.ref }}-${{ inputs.working_directory }}-${{ inputs.language }}
   cancel-in-progress: true
 
 permissions:

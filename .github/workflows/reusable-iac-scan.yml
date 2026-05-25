@@ -44,7 +44,9 @@ on:
         default: ''
 
 concurrency:
-  group: iac-scan-${{ github.workflow }}-${{ github.ref }}
+  # Include iac_directory + framework so callers can scan multiple stacks in
+  # one pipeline without cross-cancellation.
+  group: iac-scan-${{ github.workflow }}-${{ github.ref }}-${{ inputs.iac_directory }}-${{ inputs.framework }}
   cancel-in-progress: true
 
 permissions:
