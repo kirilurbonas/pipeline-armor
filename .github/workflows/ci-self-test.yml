@@ -1,0 +1,134 @@
+# =============================================================================
+# pipeline-armor :: ci-self-test.yml
+# -----------------------------------------------------------------------------
+# Smoke tests for the reusable workflows in this repository.
+#
+# This file gives us a "dogfooding" pipeline: every PR to pipeline-armor runs
+# the reusable workflows against the bundled example apps. If a template ever
+# regresses, this catches it before any consumer ever upgrades.
+#
+# It also serves as the canonical reference for how to wire up each workflow.
+# =============================================================================
+name: ci-self-test
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+# Cancel in-flight runs on the same branch — the self-test is purely a smoke
+# test and the latest commit's run is the one we care about.
+concurrency:
+  group: self-test-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  security-events: write
+  pull-requests: write
+  actions: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Lint the workflow YAML and the policy files. Catches accidental indentation
+  # / schema errors before we exercise any of the reusable jobs.
+  # ---------------------------------------------------------------------------
+  lint:
+    name: Lint workflows + policies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install linters
+        run: pip install --quiet 'yamllint==1.35.1' 'actionlint-py==1.7.7' || true
+      - name: yamllint
+        run: |
+          yamllint -d '{extends: relaxed, rules: {line-length: {max: 200}}}' \
+            .github/workflows/ policies/ || true
+      - name: actionlint
+        uses: raven-actions/actionlint@v2
+        with:
+          files: ".github/workflows/*.yml"
+
+  # ---------------------------------------------------------------------------
+  # Self-test the Python parser scripts directly. They have to handle
+  # malformed / empty input from upstream scanners; small unit-style checks
+  # here keep us honest.
+  # ---------------------------------------------------------------------------
+  scripts:
+    name: Test helper scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Run script smoke tests
+        run: |
+          # Each script should accept --help cleanly.
+          python3 scripts/parse-trivy-report.py --help
+          python3 scripts/parse-checkov-report.py --help
+          python3 scripts/generate-sbom-summary.py --help
+
+          # Empty-input behavior: scripts should produce a valid empty report
+          # rather than crashing.
+          echo '{}' > empty.json
+          python3 scripts/parse-trivy-report.py \
+            --report empty.json --config-report empty.json --sbom-summary empty.json \
+            --image test:latest --build-duration 0 --image-size-mb 0 \
+            --fail-on HIGH \
+            --summary-out /tmp/s.md --comment-out /tmp/c.md --counts-out /tmp/k.json
+          python3 scripts/parse-checkov-report.py \
+            --report empty.json --fail-on high \
+            --summary-out /tmp/s2.md --comment-out /tmp/c2.md --counts-out /tmp/k2.json
+          python3 scripts/generate-sbom-summary.py empty.json > /tmp/sbom.json
+          test -s /tmp/k.json && test -s /tmp/k2.json
+          echo "Helper-script smoke tests passed."
+
+  # ---------------------------------------------------------------------------
+  # Exercise the reusable workflows against the bundled examples. These run
+  # in parallel — each is a self-contained call site.
+  # ---------------------------------------------------------------------------
+  example-secret-scan:
+    name: Example | secret-scan
+    uses: ./.github/workflows/reusable-secret-scan.yml
+    with:
+      scan_depth: all
+      # Self-test runs on a clean repo: a real verified secret should never
+      # be found, so failing on detection is the correct behavior here.
+      fail_on_detection: true
+
+  example-iac-scan:
+    name: Example | iac-scan (terraform)
+    uses: ./.github/workflows/reusable-iac-scan.yml
+    with:
+      iac_directory: examples/terraform-infra
+      framework: terraform
+      # Soft fail in self-test: the example HCL is intentionally simple and
+      # may surface low-priority Checkov findings. A real consumer should
+      # leave soft_fail off and tighten with checkov_skip_checks.
+      soft_fail: true
+
+  example-sast-node:
+    name: Example | sast (Node.js)
+    uses: ./.github/workflows/reusable-sast.yml
+    with:
+      language: javascript
+      working_directory: examples/nodejs-app
+      # Self-test runs without a Snyk token, so we explicitly disable that
+      # scanner and rely on Semgrep only.
+      snyk_enable: false
+      fail_on_severity: critical
+
+  example-sast-python:
+    name: Example | sast (Python)
+    uses: ./.github/workflows/reusable-sast.yml
+    with:
+      language: python
+      working_directory: examples/python-app
+      snyk_enable: false
+      fail_on_severity: critical

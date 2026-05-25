@@ -1,0 +1,48 @@
+# =============================================================================
+# Example consumer pipeline — Terraform infrastructure
+# -----------------------------------------------------------------------------
+# IaC repos don't have a Dockerfile, so this pipeline is shorter than the
+# application ones. It runs secret scanning, IaC scanning, and then gates
+# the `terraform apply` step.
+# =============================================================================
+name: DevSecOps Pipeline (IaC)
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: pipeline-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  security-events: write
+  pull-requests: write
+  actions: read
+  deployments: write
+
+jobs:
+  secret-scan:
+    uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-secret-scan.yml@main
+
+  iac-scan:
+    uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-iac-scan.yml@main
+    with:
+      iac_directory: .
+      framework: terraform
+      fail_on_severity: high
+      # Document any suppressions inline so future readers know why a check
+      # is silenced. Example:
+      # checkov_skip_checks: "CKV_AWS_18"  # bucket logs to itself — single-bucket example
+
+  # Optional: a `terraform plan` job that posts the plan diff as a PR comment.
+  # Wire deploy-gate to it just like the app pipelines do.
+  deploy-gate:
+    needs: [iac-scan, secret-scan]
+    uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-deploy-gate.yml@main
+    with:
+      environment: staging
+      required_scans: iac,secrets

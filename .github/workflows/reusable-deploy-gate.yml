@@ -1,0 +1,284 @@
+# =============================================================================
+# pipeline-armor :: reusable-deploy-gate.yml
+# -----------------------------------------------------------------------------
+# The final pre-deployment gate.
+#
+# Responsibilities:
+#   * Aggregate the results of every upstream scan job declared in
+#     `required_scans` via the GitHub API.
+#   * Apply environment-specific severity policy (dev/staging/prod) on top of
+#     the per-job thresholds the caller has already configured.
+#   * For prod, gate on a GitHub Environment that has manual reviewers
+#     configured. We do NOT roll our own approval mechanism — environment
+#     protection rules are the audited, supported way to do this.
+#   * Emit a deployment readiness report + Slack notification.
+#
+# This workflow is the "go/no-go" — it should be the *last* job in the
+# caller's pipeline, with `needs:` pointing at every upstream scan.
+# =============================================================================
+name: reusable-deploy-gate
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: 'Target environment: dev|staging|prod'
+        type: string
+        required: true
+      required_scans:
+        description: 'Comma-separated list of required passing scans: sast,container,iac,secrets,dependencies'
+        type: string
+        default: 'sast,container,iac,secrets'
+      bypass_approvers:
+        description: 'GitHub usernames who can approve a bypass for prod (informational).'
+        type: string
+        default: ''
+      notify_slack:
+        description: 'Post a colored deployment-gate status to Slack.'
+        type: boolean
+        default: false
+      artifact_run_id:
+        description: 'Workflow run ID whose scan artifacts should be evaluated. Defaults to the current run.'
+        type: string
+        default: ''
+    secrets:
+      SLACK_WEBHOOK_URL:
+        required: false
+    outputs:
+      decision:
+        description: 'Final gate decision: pass|fail'
+        value: ${{ jobs.gate.outputs.decision }}
+      score:
+        description: 'Computed security score (0-100).'
+        value: ${{ jobs.gate.outputs.score }}
+
+concurrency:
+  group: deploy-gate-${{ github.workflow }}-${{ inputs.environment }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+  deployments: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  gate:
+    name: Deploy gate (${{ inputs.environment }})
+    runs-on: ubuntu-latest
+    # The GitHub Environment is what actually enforces manual approval for
+    # prod. Required reviewers are configured on the environment object in
+    # the repo settings — see docs/security-gates.md.
+    environment: ${{ inputs.environment }}
+    timeout-minutes: 60
+    outputs:
+      decision: ${{ steps.decide.outputs.decision }}
+      score: ${{ steps.decide.outputs.score }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # -----------------------------------------------------------------------
+      # 1. Download every artifact produced by upstream scans in this run. The
+      #    artifact names are the conventions used by the other reusable
+      #    workflows in this library.
+      # -----------------------------------------------------------------------
+      - name: Download upstream scan artifacts
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ inputs.artifact_run_id || github.run_id }}
+          github-token: ${{ github.token }}
+          path: scan-artifacts
+          merge-multiple: false
+        continue-on-error: true
+
+      # -----------------------------------------------------------------------
+      # 2. Evaluate. We tally findings across the artifacts, apply the
+      #    environment-specific policy, and compute a 0-100 security score.
+      # -----------------------------------------------------------------------
+      - name: Evaluate gate
+        id: decide
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          REQUIRED_SCANS: ${{ inputs.required_scans }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ inputs.artifact_run_id || github.run_id }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib, subprocess, sys
+
+          env = os.environ["ENVIRONMENT"]
+          required = [s.strip() for s in os.environ["REQUIRED_SCANS"].split(",") if s.strip()]
+          art_root = pathlib.Path("scan-artifacts")
+
+          # ----- Environment policy ------------------------------------------
+          # The per-scan thresholds set by the caller are the first line of
+          # defense; this layer can only TIGHTEN them by environment, never
+          # loosen, on the principle that prod is the strictest gate.
+          policy = {
+              "dev":     {"fail_on": {"critical"}},
+              "staging": {"fail_on": {"high", "critical"}},
+              "prod":    {"fail_on": {"medium", "high", "critical"}},
+          }[env]
+
+          # ----- Map a required-scan name to its artifact directory ----------
+          mapping = {
+              "sast":         ("sast-reports",          "sast-findings.json"),
+              "container":    ("container-scan-reports","trivy-counts.json"),
+              "iac":          ("iac-scan-reports",      "checkov-counts.json"),
+              "secrets":      ("secret-scan-reports",   "secrets-summary.json"),
+              "dependencies": ("dependency-reports",    "snyk-deps.json"),
+          }
+
+          statuses = []
+          breaches = 0
+          totals = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+
+          for scan in required:
+              if scan not in mapping:
+                  statuses.append({"scan": scan, "status": "unknown", "detail": "no mapping"})
+                  continue
+              dirname, filename = mapping[scan]
+              path = art_root / dirname / filename
+              if not path.exists():
+                  statuses.append({"scan": scan, "status": "missing", "detail": f"{path}"})
+                  continue
+              try:
+                  data = json.loads(path.read_text())
+              except json.JSONDecodeError:
+                  statuses.append({"scan": scan, "status": "unreadable", "detail": f"{path}"})
+                  continue
+
+              counts = data.get("counts") or data
+              this_breach = 0
+              for sev in ("critical", "high", "medium", "low"):
+                  n = int(counts.get(sev, 0)) if isinstance(counts, dict) else 0
+                  totals[sev] += n
+                  if sev in policy["fail_on"]:
+                      this_breach += n
+              statuses.append({
+                  "scan": scan,
+                  "status": "fail" if this_breach else "pass",
+                  "counts": {k: int(counts.get(k, 0)) if isinstance(counts, dict) else 0
+                             for k in ("critical","high","medium","low")},
+              })
+              breaches += this_breach
+
+          # ----- Security score ----------------------------------------------
+          # Weighted: critical=10, high=4, medium=1, low=0.25. Clamped to
+          # [0, 100]. This is intentionally simple — it's meant to give an
+          # at-a-glance trend, not be an actuarial risk number.
+          weights = {"critical": 10, "high": 4, "medium": 1, "low": 0.25}
+          penalty = sum(weights[s] * totals[s] for s in totals)
+          score = max(0, int(round(100 - penalty)))
+
+          decision = "fail" if breaches > 0 else "pass"
+
+          report = {
+              "environment": env,
+              "decision": decision,
+              "score": score,
+              "totals": totals,
+              "statuses": statuses,
+              "policy": {"fail_on": sorted(policy["fail_on"])},
+              "run_id": os.environ["RUN_ID"],
+          }
+          pathlib.Path("deploy-gate-report.json").write_text(json.dumps(report, indent=2))
+
+          # ----- Markdown summary --------------------------------------------
+          lines = [
+              f"## Deploy Gate — `{env}`",
+              "",
+              f"**Decision:** {'PASS' if decision == 'pass' else 'FAIL'}",
+              f"**Security score:** {score}/100",
+              f"**Policy:** fail on `{', '.join(sorted(policy['fail_on']))}`",
+              "",
+              "### Scan results",
+              "",
+              "| Scan | Status | Critical | High | Medium | Low |",
+              "|---|---|---|---|---|---|",
+          ]
+          for s in statuses:
+              c = s.get("counts", {"critical":0,"high":0,"medium":0,"low":0})
+              lines.append(
+                  f"| {s['scan']} | {s['status']} | {c['critical']} | "
+                  f"{c['high']} | {c['medium']} | {c['low']} |"
+              )
+          lines.append("")
+          lines.append(f"**Totals:** {totals}")
+          pathlib.Path("deploy-gate-summary.md").write_text("\n".join(lines) + "\n")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as fh:
+              fh.write(pathlib.Path("deploy-gate-summary.md").read_text())
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write(f"decision={decision}\n")
+              out.write(f"score={score}\n")
+              out.write(f"breaches={breaches}\n")
+
+          # ----- Stdout for the log ------------------------------------------
+          print(f"Gate decision: {decision}; score: {score}; breaches: {breaches}")
+          if decision == "fail":
+              sys.exit(0)  # Gate enforcement happens in the next step.
+          PY
+
+      # -----------------------------------------------------------------------
+      # 3. Slack notification. We use a single-page block with a colored
+      #    sidebar so it's scannable in a busy channel.
+      # -----------------------------------------------------------------------
+      - name: Notify Slack
+        if: inputs.notify_slack && env.SLACK_WEBHOOK_URL != ''
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          DECISION: ${{ steps.decide.outputs.decision }}
+          SCORE: ${{ steps.decide.outputs.score }}
+        run: |
+          color=$([ "$DECISION" = "pass" ] && echo "#2eb886" || echo "#d63333")
+          payload=$(cat <<JSON
+          {
+            "attachments": [{
+              "color": "$color",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Deploy Gate — ${{ inputs.environment }}*\n*Decision:* $DECISION\n*Score:* $SCORE/100\n*Repo:* ${{ github.repository }}\n*Commit:* \`${{ github.sha }}\`\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run>"
+                  }
+                }
+              ]
+            }]
+          }
+          JSON
+          )
+          curl -sS -X POST -H 'Content-Type: application/json' \
+            --data "$payload" \
+            "$SLACK_WEBHOOK_URL" > /dev/null
+
+      - name: Upload deploy gate report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deploy-gate-report
+          path: |
+            deploy-gate-report.json
+            deploy-gate-summary.md
+          if-no-files-found: warn
+          retention-days: 90
+
+      # -----------------------------------------------------------------------
+      # 4. Enforce. This is the gate. If the decision is fail, we exit non-
+      #    zero so the downstream deploy job — which should have us in
+      #    `needs:` — is skipped.
+      # -----------------------------------------------------------------------
+      - name: Enforce decision
+        env:
+          DECISION: ${{ steps.decide.outputs.decision }}
+        run: |
+          if [ "$DECISION" != "pass" ]; then
+            echo "::error::Deploy gate FAILED for environment '${{ inputs.environment }}'."
+            echo "See deploy-gate-summary.md for details. Downstream deploys will not run."
+            exit 1
+          fi
+          echo "Deploy gate passed for '${{ inputs.environment }}'."

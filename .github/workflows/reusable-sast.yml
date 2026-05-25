@@ -1,0 +1,365 @@
+# =============================================================================
+# pipeline-armor :: reusable-sast.yml
+# -----------------------------------------------------------------------------
+# Static Application Security Testing.
+#
+# This workflow runs two SAST scanners against a caller's source tree:
+#   1. Snyk Code  - commercial scanner, requires SNYK_TOKEN secret.
+#   2. Semgrep    - OSS scanner with the `auto` rule set, no token required.
+#
+# Both scanners emit SARIF, which is uploaded to the GitHub code-scanning
+# Security tab. Findings are also summarized as a PR comment and in the
+# Actions job summary.
+#
+# Severity gating is enforced by `fail_on_severity` — the job fails when one
+# or more findings at or above the configured severity exist after the run.
+#
+# Callers should invoke this workflow with `uses:` from their pipeline file;
+# see examples/ in the repository root for fully wired examples.
+# =============================================================================
+name: reusable-sast
+
+on:
+  workflow_call:
+    inputs:
+      language:
+        description: 'Primary language of the project: python|javascript|java|go'
+        type: string
+        required: true
+      fail_on_severity:
+        description: 'Lowest severity that fails the build: low|medium|high|critical'
+        type: string
+        default: 'high'
+      snyk_enable:
+        description: 'Run Snyk Code in addition to Semgrep. Requires SNYK_TOKEN.'
+        type: boolean
+        default: true
+      sarif_upload:
+        description: 'Upload SARIF results to the GitHub Security tab.'
+        type: boolean
+        default: true
+      working_directory:
+        description: 'Path within the repository to scan. Defaults to the repository root.'
+        type: string
+        default: '.'
+    secrets:
+      SNYK_TOKEN:
+        description: 'API token for Snyk. Only required when snyk_enable=true.'
+        required: false
+
+# Cancel earlier in-flight runs of this workflow for the same ref — useful when
+# multiple pushes land in quick succession on a long-running PR.
+concurrency:
+  group: sast-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  # Required for github/codeql-action/upload-sarif.
+  security-events: write
+  # Required so we can post a PR comment summarizing findings.
+  pull-requests: write
+
+jobs:
+  sast:
+    name: SAST (${{ inputs.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      # -----------------------------------------------------------------------
+      # 1. Checkout. fetch-depth: 0 gives Snyk and Semgrep the full history,
+      #    which lets them attribute findings to the introducing commit and
+      #    suppress findings that already exist on the base branch.
+      # -----------------------------------------------------------------------
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # -----------------------------------------------------------------------
+      # 2. Language runtime. We always need Python available because Semgrep
+      #    is a Python package; we additionally set up the caller's primary
+      #    language so that Snyk Code can resolve package manifests.
+      # -----------------------------------------------------------------------
+      - name: Setup Python (Semgrep runtime)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Setup Node.js
+        if: inputs.language == 'javascript'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Java
+        if: inputs.language == 'java'
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Setup Go
+        if: inputs.language == 'go'
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+
+      # -----------------------------------------------------------------------
+      # 3. Snyk Code. We deliberately use `--sarif-file-output` and a
+      #    non-failing `|| true` so the SARIF artifact is always produced;
+      #    severity gating happens in the dedicated step below.
+      # -----------------------------------------------------------------------
+      - name: Install Snyk CLI
+        if: inputs.snyk_enable && env.SNYK_TOKEN != ''
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: |
+          curl -sSL https://static.snyk.io/cli/latest/snyk-linux -o /usr/local/bin/snyk
+          chmod +x /usr/local/bin/snyk
+          snyk --version
+
+      - name: Run Snyk Code (SAST)
+        if: inputs.snyk_enable && env.SNYK_TOKEN != ''
+        working-directory: ${{ inputs.working_directory }}
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: |
+          set +e
+          snyk code test \
+            --severity-threshold=${{ inputs.fail_on_severity }} \
+            --sarif-file-output=snyk-sast.sarif \
+            --json-file-output=snyk-sast.json
+          # Capture the exit code but do not fail here; we want SARIF uploaded
+          # and a summary rendered even when findings are present.
+          echo "SNYK_EXIT_CODE=$?" >> "$GITHUB_ENV"
+
+      - name: Upload Snyk SARIF to Security tab
+        if: inputs.snyk_enable && inputs.sarif_upload && env.SNYK_TOKEN != '' && hashFiles(format('{0}/snyk-sast.sarif', inputs.working_directory)) != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ${{ inputs.working_directory }}/snyk-sast.sarif
+          category: snyk-code
+
+      # -----------------------------------------------------------------------
+      # 4. Semgrep OSS — always runs, even without a Snyk token. The `auto`
+      #    config selects rule packs based on detected languages.
+      # -----------------------------------------------------------------------
+      - name: Install Semgrep
+        run: pip install --quiet semgrep==1.86.0
+
+      - name: Run Semgrep
+        working-directory: ${{ inputs.working_directory }}
+        run: |
+          set +e
+          semgrep scan \
+            --config=auto \
+            --sarif --output=semgrep.sarif \
+            --json --output=semgrep.json \
+            --metrics=off \
+            --error
+          echo "SEMGREP_EXIT_CODE=$?" >> "$GITHUB_ENV"
+
+      - name: Upload Semgrep SARIF to Security tab
+        if: inputs.sarif_upload && hashFiles(format('{0}/semgrep.sarif', inputs.working_directory)) != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ${{ inputs.working_directory }}/semgrep.sarif
+          category: semgrep
+
+      # -----------------------------------------------------------------------
+      # 5. Findings summary. We use a small inline Python script so we don't
+      #    depend on jq's specific SARIF idioms across runners, and so we can
+      #    render the GitHub Actions job summary table consistently.
+      # -----------------------------------------------------------------------
+      - name: Summarize findings
+        id: summary
+        working-directory: ${{ inputs.working_directory }}
+        env:
+          FAIL_ON: ${{ inputs.fail_on_severity }}
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib, sys
+
+          SEVERITY_ORDER = {"low": 0, "medium": 1, "high": 2, "critical": 3}
+          fail_on = os.environ["FAIL_ON"].lower()
+          fail_threshold = SEVERITY_ORDER[fail_on]
+
+          def load(path):
+              p = pathlib.Path(path)
+              if not p.exists() or p.stat().st_size == 0:
+                  return None
+              try:
+                  return json.loads(p.read_text())
+              except json.JSONDecodeError:
+                  return None
+
+          def normalize_severity(s):
+              # Snyk uses "error/warning/note"; Semgrep uses "ERROR/WARNING/INFO";
+              # SARIF has level. We normalize everything to low/medium/high/critical.
+              if not s:
+                  return "low"
+              s = s.lower()
+              return {
+                  "error": "high", "warning": "medium", "note": "low",
+                  "info": "low", "none": "low",
+                  "critical": "critical", "high": "high",
+                  "medium": "medium", "low": "low",
+              }.get(s, "low")
+
+          findings = []
+          for path, tool in [("snyk-sast.sarif", "snyk"), ("semgrep.sarif", "semgrep")]:
+              data = load(path)
+              if not data:
+                  continue
+              for run in data.get("runs", []):
+                  for result in run.get("results", []):
+                      sev = normalize_severity(
+                          result.get("properties", {}).get("security-severity")
+                          or result.get("level")
+                      )
+                      rule = result.get("ruleId", "unknown")
+                      msg = (result.get("message", {}) or {}).get("text", "")
+                      loc = ""
+                      for l in result.get("locations", []) or []:
+                          art = l.get("physicalLocation", {}).get("artifactLocation", {})
+                          region = l.get("physicalLocation", {}).get("region", {})
+                          loc = f"{art.get('uri','?')}:{region.get('startLine','?')}"
+                          break
+                      findings.append({
+                          "tool": tool, "rule": rule, "severity": sev,
+                          "message": msg[:140], "location": loc,
+                      })
+
+          counts = {"low": 0, "medium": 0, "high": 0, "critical": 0}
+          for f in findings:
+              counts[f["severity"]] += 1
+
+          summary = pathlib.Path(os.environ["GITHUB_STEP_SUMMARY"])
+          with summary.open("a") as fh:
+              fh.write("## SAST Results\n\n")
+              fh.write("| Severity | Count |\n|---|---|\n")
+              for sev in ("critical", "high", "medium", "low"):
+                  fh.write(f"| {sev.title()} | {counts[sev]} |\n")
+              fh.write(f"\n**Fail threshold:** `{fail_on}` and above.\n\n")
+              if findings:
+                  fh.write("### Top findings\n\n")
+                  fh.write("| Tool | Severity | Rule | Location | Message |\n")
+                  fh.write("|---|---|---|---|---|\n")
+                  ranked = sorted(
+                      findings,
+                      key=lambda f: -SEVERITY_ORDER[f["severity"]],
+                  )[:5]
+                  for f in ranked:
+                      fh.write(
+                          f"| {f['tool']} | {f['severity']} | `{f['rule']}` |"
+                          f" `{f['location']}` | {f['message']} |\n"
+                      )
+              fh.write(
+                  "\nSee the [Security tab]"
+                  "(../../security/code-scanning) for the full list.\n"
+              )
+
+          # Surface counts for downstream steps.
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              for sev, n in counts.items():
+                  out.write(f"{sev}={n}\n")
+
+          # Persist a compact JSON for the PR comment step.
+          pathlib.Path("sast-findings.json").write_text(json.dumps({
+              "counts": counts,
+              "top": sorted(findings, key=lambda f: -SEVERITY_ORDER[f['severity']])[:10],
+          }))
+
+          # Decide pass/fail.
+          breaches = sum(
+              counts[s] for s in counts if SEVERITY_ORDER[s] >= fail_threshold
+          )
+          pathlib.Path("sast-breaches").write_text(str(breaches))
+          PY
+
+      # -----------------------------------------------------------------------
+      # 6. PR comment. Skipped on push events. We use actions/github-script to
+      #    upsert a single comment keyed by a hidden marker so re-runs don't
+      #    spam the conversation.
+      # -----------------------------------------------------------------------
+      - name: Comment on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const file = path.join('${{ inputs.working_directory }}', 'sast-findings.json');
+            if (!fs.existsSync(file)) { return; }
+            const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+            const marker = '<!-- pipeline-armor:sast -->';
+            const rows = (data.top || []).map(f =>
+              `| ${f.tool} | ${f.severity} | \`${f.rule}\` | \`${f.location}\` |`
+            ).join('\n') || '_No findings._';
+            const body = [
+              marker,
+              '### SAST scan results',
+              '',
+              `| Critical | High | Medium | Low |`,
+              `|---|---|---|---|`,
+              `| ${data.counts.critical} | ${data.counts.high} | ${data.counts.medium} | ${data.counts.low} |`,
+              '',
+              '#### Top findings',
+              '| Tool | Severity | Rule | Location |',
+              '|---|---|---|---|',
+              rows,
+              '',
+              '_Fail threshold: `${{ inputs.fail_on_severity }}`._',
+            ].join('\n');
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                comment_id: existing.id, body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: context.issue.number, body,
+              });
+            }
+
+      # -----------------------------------------------------------------------
+      # 7. Artifacts are uploaded even on failure so engineers can download the
+      #    raw SARIF/JSON for offline triage.
+      # -----------------------------------------------------------------------
+      - name: Upload scan artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sast-reports
+          path: |
+            ${{ inputs.working_directory }}/snyk-sast.sarif
+            ${{ inputs.working_directory }}/snyk-sast.json
+            ${{ inputs.working_directory }}/semgrep.sarif
+            ${{ inputs.working_directory }}/semgrep.json
+            ${{ inputs.working_directory }}/sast-findings.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+      # -----------------------------------------------------------------------
+      # 8. Severity gate. This is the *only* step that should fail the job;
+      #    everything above is best-effort so the user always gets a report.
+      # -----------------------------------------------------------------------
+      - name: Enforce severity gate
+        working-directory: ${{ inputs.working_directory }}
+        run: |
+          breaches=$(cat sast-breaches 2>/dev/null || echo 0)
+          if [ "$breaches" -gt 0 ]; then
+            echo "::error::SAST gate failed: $breaches finding(s) at or above '${{ inputs.fail_on_severity }}'."
+            echo "See the Security tab and the job summary for details."
+            exit 1
+          fi
+          echo "SAST gate passed."

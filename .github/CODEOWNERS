@@ -1,0 +1,19 @@
+# =============================================================================
+# Code owners for pipeline-armor.
+# -----------------------------------------------------------------------------
+# Pull requests touching any of the paths below will request a review from
+# the listed owner. Pipeline-armor is a security-critical library: changes
+# to scan workflows or policy files MUST be reviewed.
+# =============================================================================
+
+# Default: every file is owned by the repo maintainer.
+*                                       @kirilurbonas
+
+# Reusable workflows and helper scripts are the core of the library and
+# carry the strictest review bar.
+/.github/workflows/                     @kirilurbonas
+/scripts/                               @kirilurbonas
+
+# Security policy files. Any change here is org-wide policy — never merge
+# without explicit sign-off.
+/policies/                              @kirilurbonas

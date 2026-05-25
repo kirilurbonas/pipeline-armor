@@ -1,0 +1,202 @@
+# =============================================================================
+# pipeline-armor :: reusable-iac-scan.yml
+# -----------------------------------------------------------------------------
+# Infrastructure-as-Code security scanning with Checkov.
+#
+# Checkov is broad but noisy out of the box — the `checkov_skip_checks` input
+# is the recommended way to suppress known-irrelevant rules in a per-repo
+# manner. Use the `policies/severity-thresholds.yml` file for organization-
+# wide defaults.
+#
+# Why Checkov and not tfsec/kics?
+#   - Single tool covers Terraform, CloudFormation, Kubernetes, Dockerfile.
+#   - Built-in CIS / SOC2 / PCI-DSS mappings, useful for compliance reporting.
+#   - SARIF output is well-formed and uploads cleanly to the Security tab.
+# =============================================================================
+name: reusable-iac-scan
+
+on:
+  workflow_call:
+    inputs:
+      iac_directory:
+        description: 'Directory containing IaC files to scan.'
+        type: string
+        default: '.'
+      framework:
+        description: 'IaC framework: terraform|cloudformation|kubernetes|dockerfile|all'
+        type: string
+        default: 'terraform'
+      fail_on_severity:
+        description: 'Lowest severity that fails the build: low|medium|high|critical'
+        type: string
+        default: 'high'
+      soft_fail:
+        description: 'If true, never fail the pipeline regardless of findings.'
+        type: boolean
+        default: false
+      checkov_skip_checks:
+        description: 'Comma-separated Checkov check IDs to skip, e.g. CKV_AWS_18,CKV_AWS_52'
+        type: string
+        default: ''
+      checkov_external_checks:
+        description: 'Path to a directory of custom Checkov policies, optional.'
+        type: string
+        default: ''
+
+concurrency:
+  group: iac-scan-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  security-events: write
+  pull-requests: write
+
+jobs:
+  iac:
+    name: IaC scan (${{ inputs.framework }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Checkov
+        run: |
+          pip install --quiet 'checkov==3.2.334'
+          checkov --version
+
+      # -----------------------------------------------------------------------
+      # 1. JSON output for our own parser. We always pass --soft-fail here so
+      #    Checkov returns 0 even with findings; gating happens later.
+      # -----------------------------------------------------------------------
+      - name: Run Checkov (JSON)
+        env:
+          SKIP: ${{ inputs.checkov_skip_checks }}
+          EXTERNAL: ${{ inputs.checkov_external_checks }}
+        run: |
+          set +e
+          checkov \
+            --directory "${{ inputs.iac_directory }}" \
+            --framework "${{ inputs.framework }}" \
+            --output json \
+            --output-file-path checkov-results.json \
+            --soft-fail \
+            --quiet \
+            ${SKIP:+--skip-check "$SKIP"} \
+            ${EXTERNAL:+--external-checks-dir "$EXTERNAL"}
+          # Checkov writes to checkov-results.json/results_json.json depending
+          # on version; normalize the path here.
+          if [ -d checkov-results.json ]; then
+            mv checkov-results.json/results_json.json checkov-results.json.tmp
+            rm -rf checkov-results.json
+            mv checkov-results.json.tmp checkov-results.json
+          fi
+
+      - name: Run Checkov (SARIF)
+        env:
+          SKIP: ${{ inputs.checkov_skip_checks }}
+        run: |
+          set +e
+          checkov \
+            --directory "${{ inputs.iac_directory }}" \
+            --framework "${{ inputs.framework }}" \
+            --output sarif \
+            --output-file-path checkov.sarif \
+            --soft-fail \
+            --quiet \
+            ${SKIP:+--skip-check "$SKIP"}
+          if [ -d checkov.sarif ]; then
+            mv checkov.sarif/results_sarif.sarif checkov.sarif.tmp
+            rm -rf checkov.sarif
+            mv checkov.sarif.tmp checkov.sarif
+          fi
+
+      - name: Upload Checkov SARIF
+        if: hashFiles('checkov.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: checkov.sarif
+          category: checkov
+
+      # -----------------------------------------------------------------------
+      # 2. Parse + summarize. The parser script maps Checkov check IDs to
+      #    compliance frameworks and computes a breach count for the gate.
+      # -----------------------------------------------------------------------
+      - name: Parse Checkov report
+        id: parse
+        env:
+          FAIL_ON: ${{ inputs.fail_on_severity }}
+        run: |
+          python3 scripts/parse-checkov-report.py \
+            --report checkov-results.json \
+            --fail-on "$FAIL_ON" \
+            --summary-out checkov-summary.md \
+            --comment-out checkov-comment.md \
+            --counts-out checkov-counts.json
+          cat checkov-summary.md >> "$GITHUB_STEP_SUMMARY"
+          python3 - <<'PY'
+          import json, os
+          c = json.load(open("checkov-counts.json"))
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              for k, v in c.items():
+                  f.write(f"{k}={v}\n")
+          PY
+
+      - name: Comment on PR
+        if: github.event_name == 'pull_request' && hashFiles('checkov-comment.md') != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('checkov-comment.md', 'utf8');
+            const marker = '<!-- pipeline-armor:iac -->';
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                comment_id: existing.id, body: marker + '\n' + body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: context.issue.number, body: marker + '\n' + body,
+              });
+            }
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: iac-scan-reports
+          path: |
+            checkov-results.json
+            checkov.sarif
+            checkov-summary.md
+            checkov-comment.md
+            checkov-counts.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Enforce severity gate
+        if: inputs.soft_fail == false
+        env:
+          BREACHES: ${{ steps.parse.outputs.breaches }}
+          FAIL_ON: ${{ inputs.fail_on_severity }}
+        run: |
+          if [ "${BREACHES:-0}" -gt 0 ]; then
+            echo "::error::IaC scan gate failed: $BREACHES finding(s) at or above '$FAIL_ON'."
+            exit 1
+          fi
+          echo "IaC scan gate passed."

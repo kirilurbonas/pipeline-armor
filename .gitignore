@@ -1,0 +1,80 @@
+# =============================================================================
+# pipeline-armor :: .gitignore
+# =============================================================================
+
+# ---- Scan artifacts (never commit) ------------------------------------------
+*.sarif
+trivy-*.json
+checkov-*.json
+checkov-*.sarif
+snyk-*.json
+snyk-*.sarif
+semgrep.json
+semgrep.sarif
+sast-findings.json
+sast-breaches
+sbom.json
+sbom-summary.json
+gitleaks-report.json
+trufflehog-report.json
+secrets-summary.json
+secrets-summary.md
+licenses.json
+licenses-summary.md
+deploy-gate-report.json
+deploy-gate-summary.md
+trivy-counts.json
+checkov-counts.json
+trivy-summary.md
+trivy-comment.md
+checkov-summary.md
+checkov-comment.md
+
+# ---- Python -----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# ---- Node -------------------------------------------------------------------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-store/
+
+# ---- Terraform --------------------------------------------------------------
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# ---- IDE / OS ---------------------------------------------------------------
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# ---- Local secrets (defense in depth — never commit these) ------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+secrets.yml
+secrets.yaml

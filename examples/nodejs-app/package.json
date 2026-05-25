@@ -1,0 +1,22 @@
+{
+  "name": "pipeline-armor-example-node",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Example Node.js application demonstrating pipeline-armor integration.",
+  "main": "src/app.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/app.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "helmet": "^8.0.0",
+    "pino": "^9.5.0"
+  },
+  "devDependencies": {
+    "license-checker": "^25.0.1"
+  }
+}

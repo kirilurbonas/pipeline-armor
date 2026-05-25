@@ -1,0 +1,54 @@
+# =============================================================================
+# pipeline-armor :: dependabot.yml
+# -----------------------------------------------------------------------------
+# Keep the pinned action versions in our reusable workflows current. The
+# `github-actions` ecosystem watches every `uses:` reference and opens PRs
+# when a newer version is published.
+# =============================================================================
+version: 2
+updates:
+  # The reusable workflows that this library exposes.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - github-actions
+    commit-message:
+      prefix: "chore(deps)"
+      include: scope
+
+  # Node.js example app — kept up to date so the SBOM and dependency review
+  # in the self-test reflect modern reality.
+  - package-ecosystem: npm
+    directory: /examples/nodejs-app
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - examples
+
+  # Python example app.
+  - package-ecosystem: pip
+    directory: /examples/python-app
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - examples
+
+  # Terraform example.
+  - package-ecosystem: terraform
+    directory: /examples/terraform-infra
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - examples

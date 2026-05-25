@@ -1,0 +1,79 @@
+# =============================================================================
+# pipeline-armor :: severity-thresholds.yml
+# -----------------------------------------------------------------------------
+# Centralized severity thresholds for every scanner this library invokes.
+#
+# Callers can either:
+#   1. Pull these values via their own pipeline composition step and pass
+#      them as `with:` inputs to the reusable workflows (preferred — keeps
+#      the workflows themselves stateless), or
+#   2. Reference this file from internal tooling for org-wide enforcement.
+#
+# These are *baselines*, not ceilings. Individual repositories may tighten
+# thresholds (e.g. set prod-only services to critical-only earlier) but
+# should not loosen them without security-team sign-off.
+# =============================================================================
+
+# Per-environment policy. The deploy gate enforces these on top of the per-
+# scan thresholds; they can only TIGHTEN, never loosen.
+environments:
+  dev:
+    fail_on:
+      - critical
+    notes: |
+      Engineers iterate quickly here. Block only on critical findings.
+      Everything else surfaces as a PR comment for visibility.
+
+  staging:
+    fail_on:
+      - critical
+      - high
+    notes: |
+      Pre-prod. Must be representative of prod policy, but slightly more
+      lenient on medium-severity dependency vulns that may not yet have
+      upstream fixes available.
+
+  prod:
+    fail_on:
+      - critical
+      - high
+      - medium
+    require_manual_approval: true
+    notes: |
+      Production. Enforces medium+ on every scanner. Manual approval is
+      required via GitHub Environment protection rules. See
+      docs/security-gates.md for the runbook.
+
+# Per-scanner defaults. Callers may override on a per-job basis via
+# `fail_on_severity` inputs, but these are the values used when no override
+# is supplied.
+scanners:
+  sast:
+    fail_on_severity: high
+    snyk_enable: true            # Snyk Code requires SNYK_TOKEN.
+
+  container:
+    fail_on_severity: HIGH       # Trivy uses uppercase severities.
+    ignore_unfixed: true         # Unfixed CVEs are tracked but don't gate.
+    enable_sbom: true
+
+  iac:
+    fail_on_severity: high
+    framework: terraform
+    soft_fail: false
+
+  secrets:
+    fail_on_detection: true
+    # Only VERIFIED secrets fail the build by default — unverified findings
+    # are reported but do not block, on the basis that regex hits without
+    # provider confirmation generate too much alert fatigue.
+
+  dependencies:
+    fail_on_severity: high
+    deny_licenses:
+      - GPL-3.0
+      - AGPL-3.0
+      - SSPL-1.0
+    # Empty allow list = allow anything not on the deny list. Set this
+    # explicitly to enforce a strict allow-list policy.
+    allow_licenses: []

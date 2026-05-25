@@ -1,0 +1,260 @@
+# =============================================================================
+# pipeline-armor :: reusable-container-scan.yml
+# -----------------------------------------------------------------------------
+# Container image security scanning.
+#
+# What this does:
+#   1. Builds the Docker image from the caller's Dockerfile.
+#   2. Runs Trivy in three modes:
+#        - Image scan: vulnerabilities in OS packages and language libs.
+#        - Config scan: misconfigurations in the Dockerfile itself.
+#        - SBOM:      CycloneDX software bill of materials.
+#   3. Uploads SARIF to the Security tab, attaches a PR comment with a
+#      vulnerability + SBOM summary, and gates the pipeline by severity.
+#
+# We always run scans with `--exit-code 0` first to produce the report, and
+# only enforce a non-zero exit in a final, isolated gate step. That way the
+# caller always gets a full report — even when the build fails the gate.
+# =============================================================================
+name: reusable-container-scan
+
+on:
+  workflow_call:
+    inputs:
+      image_ref:
+        description: 'Image reference to build and scan, e.g. myapp:${{ github.sha }}'
+        type: string
+        required: true
+      dockerfile_path:
+        description: 'Path to the Dockerfile, relative to build_context.'
+        type: string
+        default: 'Dockerfile'
+      build_context:
+        description: 'Docker build context directory.'
+        type: string
+        default: '.'
+      fail_on_severity:
+        description: 'Lowest severity that fails the build: LOW|MEDIUM|HIGH|CRITICAL.'
+        type: string
+        default: 'HIGH'
+      skip_files:
+        description: 'Comma-separated paths within the image to skip during scanning.'
+        type: string
+        default: ''
+      enable_sbom:
+        description: 'Emit a CycloneDX SBOM as an artifact.'
+        type: boolean
+        default: true
+      ignore_unfixed:
+        description: 'Ignore vulnerabilities for which no upstream fix exists.'
+        type: boolean
+        default: true
+
+concurrency:
+  group: container-scan-${{ github.workflow }}-${{ github.ref }}-${{ inputs.image_ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  security-events: write
+  pull-requests: write
+
+jobs:
+  scan:
+    name: Container scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # -----------------------------------------------------------------------
+      # 1. Build the image. We use docker buildx with --load so the image lands
+      #    in the local daemon and Trivy can scan it without pushing to a
+      #    registry. We capture build time and final image size for the
+      #    summary table.
+      # -----------------------------------------------------------------------
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        id: build
+        run: |
+          start=$(date +%s)
+          docker buildx build \
+            --load \
+            -t "${{ inputs.image_ref }}" \
+            -f "${{ inputs.build_context }}/${{ inputs.dockerfile_path }}" \
+            "${{ inputs.build_context }}"
+          end=$(date +%s)
+          duration=$(( end - start ))
+          size_bytes=$(docker image inspect "${{ inputs.image_ref }}" --format '{{.Size}}')
+          # Convert to MB with one decimal place via awk to avoid bashisms.
+          size_mb=$(awk -v b="$size_bytes" 'BEGIN { printf "%.1f", b/1024/1024 }')
+          echo "duration=$duration" >> "$GITHUB_OUTPUT"
+          echo "size_mb=$size_mb"   >> "$GITHUB_OUTPUT"
+
+      # -----------------------------------------------------------------------
+      # 2. Install Trivy. Using the official install script pins a known
+      #    version per release of pipeline-armor — bump TRIVY_VERSION when a
+      #    new CVE database format ships.
+      # -----------------------------------------------------------------------
+      - name: Install Trivy
+        env:
+          TRIVY_VERSION: 'v0.58.0'
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+            | sh -s -- -b /usr/local/bin "$TRIVY_VERSION"
+          trivy --version
+
+      # -----------------------------------------------------------------------
+      # 3. Vulnerability scan (JSON + SARIF). Two passes: full report for the
+      #    PR comment, and a SARIF output for the Security tab. The third
+      #    pass — the gate — only happens at the end.
+      # -----------------------------------------------------------------------
+      - name: Trivy image scan (JSON, full)
+        run: |
+          trivy image \
+            --exit-code 0 \
+            --format json \
+            --output trivy-full.json \
+            --scanners vuln,secret,misconfig \
+            ${{ inputs.ignore_unfixed && '--ignore-unfixed' || '' }} \
+            ${{ inputs.skip_files != '' && format('--skip-files {0}', inputs.skip_files) || '' }} \
+            "${{ inputs.image_ref }}"
+
+      - name: Trivy image scan (SARIF)
+        run: |
+          trivy image \
+            --exit-code 0 \
+            --format sarif \
+            --output trivy.sarif \
+            "${{ inputs.image_ref }}"
+
+      - name: Upload Trivy SARIF
+        if: hashFiles('trivy.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy.sarif
+          category: trivy-image
+
+      # -----------------------------------------------------------------------
+      # 4. Dockerfile misconfig scan. This catches things like `USER root`,
+      #    missing HEALTHCHECK, world-writable directories, etc.
+      # -----------------------------------------------------------------------
+      - name: Trivy Dockerfile config scan
+        run: |
+          trivy config \
+            --exit-code 0 \
+            --format json \
+            --output trivy-config.json \
+            "${{ inputs.build_context }}/${{ inputs.dockerfile_path }}"
+
+      # -----------------------------------------------------------------------
+      # 5. SBOM. We emit CycloneDX format because it's the most broadly
+      #    supported by downstream consumers (Dependency-Track, GitHub
+      #    Dependency Graph, etc.).
+      # -----------------------------------------------------------------------
+      - name: Generate CycloneDX SBOM
+        if: inputs.enable_sbom
+        run: |
+          trivy image \
+            --format cyclonedx \
+            --output sbom.json \
+            "${{ inputs.image_ref }}"
+
+      - name: Summarize SBOM
+        if: inputs.enable_sbom
+        run: python3 scripts/generate-sbom-summary.py sbom.json > sbom-summary.json
+
+      # -----------------------------------------------------------------------
+      # 6. Parse Trivy results and render a job summary. We do this inline so
+      #    the workflow stays self-contained and doesn't require a Python
+      #    script for the most common case.
+      # -----------------------------------------------------------------------
+      - name: Summarize findings
+        id: summary
+        env:
+          IMAGE_REF: ${{ inputs.image_ref }}
+          BUILD_DURATION: ${{ steps.build.outputs.duration }}
+          IMAGE_SIZE: ${{ steps.build.outputs.size_mb }}
+          FAIL_ON: ${{ inputs.fail_on_severity }}
+        run: |
+          python3 scripts/parse-trivy-report.py \
+            --report trivy-full.json \
+            --config-report trivy-config.json \
+            --sbom-summary sbom-summary.json \
+            --image "$IMAGE_REF" \
+            --build-duration "$BUILD_DURATION" \
+            --image-size-mb "$IMAGE_SIZE" \
+            --fail-on "$FAIL_ON" \
+            --summary-out trivy-summary.md \
+            --comment-out trivy-comment.md \
+            --counts-out trivy-counts.json
+          cat trivy-summary.md >> "$GITHUB_STEP_SUMMARY"
+          # Surface the highest-priority counts for the gate step below.
+          python3 - <<'PY'
+          import json, os
+          c = json.load(open("trivy-counts.json"))
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              for k, v in c.items():
+                  f.write(f"{k}={v}\n")
+          PY
+
+      - name: Comment on PR
+        if: github.event_name == 'pull_request' && hashFiles('trivy-comment.md') != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('trivy-comment.md', 'utf8');
+            const marker = '<!-- pipeline-armor:container -->';
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                comment_id: existing.id, body: marker + '\n' + body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: context.issue.number, body: marker + '\n' + body,
+              });
+            }
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: container-scan-reports
+          path: |
+            trivy-full.json
+            trivy.sarif
+            trivy-config.json
+            sbom.json
+            sbom-summary.json
+            trivy-summary.md
+            trivy-comment.md
+            trivy-counts.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+      # -----------------------------------------------------------------------
+      # 7. Severity gate. Runs last so the report is always uploaded. We
+      #    consult the per-severity counts produced above.
+      # -----------------------------------------------------------------------
+      - name: Enforce severity gate
+        env:
+          FAIL_ON: ${{ inputs.fail_on_severity }}
+          BREACHES: ${{ steps.summary.outputs.breaches }}
+        run: |
+          if [ "${BREACHES:-0}" -gt 0 ]; then
+            echo "::error::Container scan gate failed: $BREACHES finding(s) at or above '$FAIL_ON'."
+            exit 1
+          fi
+          echo "Container scan gate passed."

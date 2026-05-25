@@ -1,0 +1,60 @@
+# =============================================================================
+# Example consumer pipeline — Python
+# -----------------------------------------------------------------------------
+# Same shape as the Node.js example; only the language and ecosystem
+# differ. See ../../nodejs-app/.github/workflows/pipeline.yml for the
+# documented version of each step.
+# =============================================================================
+name: DevSecOps Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: pipeline-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  security-events: write
+  pull-requests: write
+  actions: read
+  deployments: write
+
+jobs:
+  secret-scan:
+    uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-secret-scan.yml@main
+
+  sast:
+    uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-sast.yml@main
+    with:
+      language: python
+      fail_on_severity: high
+    secrets:
+      SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+  dependency-review:
+    uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-dependency-review.yml@main
+    with:
+      fail_on_severity: high
+      ecosystem: pip
+    secrets:
+      SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+  container-scan:
+    needs: [secret-scan]
+    uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-container-scan.yml@main
+    with:
+      image_ref: myapp:${{ github.sha }}
+      enable_sbom: true
+      fail_on_severity: HIGH
+
+  deploy-gate:
+    needs: [sast, container-scan, dependency-review, secret-scan]
+    uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-deploy-gate.yml@main
+    with:
+      environment: staging
+      required_scans: sast,container,secrets,dependencies

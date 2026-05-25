@@ -1,0 +1,80 @@
+# =============================================================================
+# Example consumer pipeline — Node.js
+# -----------------------------------------------------------------------------
+# Copy this file into your application repo at `.github/workflows/pipeline.yml`.
+# It already references the upstream `kirilurbonas/pipeline-armor`; if you've
+# forked this library, swap the org. Replace `@main` with a pinned tag or
+# commit SHA in production for supply-chain hardening.
+#
+# The pipeline calls every reusable workflow in pipeline-armor and gates
+# deployment on their aggregate result.
+# =============================================================================
+name: DevSecOps Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+# Cancel superseded runs on the same PR to avoid burning CI minutes on
+# stale commits.
+concurrency:
+  group: pipeline-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  security-events: write
+  pull-requests: write
+  actions: read
+  deployments: write
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Shift-left scans — run in parallel against the source tree.
+  # ---------------------------------------------------------------------------
+  secret-scan:
+    uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-secret-scan.yml@main
+
+  sast:
+    uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-sast.yml@main
+    with:
+      language: javascript
+      fail_on_severity: high
+    secrets:
+      SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+  dependency-review:
+    uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-dependency-review.yml@main
+    with:
+      fail_on_severity: high
+      ecosystem: npm
+    secrets:
+      SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+  # ---------------------------------------------------------------------------
+  # Build & container scan — depends on secret-scan because there's no
+  # point building an image from a tree that contains a leaked key.
+  # ---------------------------------------------------------------------------
+  container-scan:
+    needs: [secret-scan]
+    uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-container-scan.yml@main
+    with:
+      image_ref: myapp:${{ github.sha }}
+      dockerfile_path: Dockerfile
+      enable_sbom: true
+      fail_on_severity: HIGH
+
+  # ---------------------------------------------------------------------------
+  # Final gate. Requires every upstream scan to have produced an artifact.
+  # ---------------------------------------------------------------------------
+  deploy-gate:
+    needs: [sast, container-scan, dependency-review, secret-scan]
+    uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-deploy-gate.yml@main
+    with:
+      environment: staging
+      required_scans: sast,container,secrets,dependencies
+      notify_slack: false
+    secrets:
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

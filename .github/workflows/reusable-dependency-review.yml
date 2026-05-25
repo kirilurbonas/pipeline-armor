@@ -1,0 +1,275 @@
+# =============================================================================
+# pipeline-armor :: reusable-dependency-review.yml
+# -----------------------------------------------------------------------------
+# Dependency and license review.
+#
+# Three layers of analysis:
+#   1. GitHub's dependency-review-action: catches new vulnerable dependencies
+#      added in a PR diff. Native to GitHub, so it understands the PR delta
+#      without us having to compute it.
+#   2. Snyk Open Source: full-tree vulnerability scan, including transitive
+#      dependencies and known-exploit metadata (KEV / OSV cross-references).
+#   3. License compliance: enforces allow/deny SPDX lists. Forbidden by
+#      default: GPL-3.0 and AGPL-3.0 because of their viral terms; teams
+#      with explicit legal approval can override via `allow_licenses`.
+# =============================================================================
+name: reusable-dependency-review
+
+on:
+  workflow_call:
+    inputs:
+      fail_on_severity:
+        description: 'Lowest severity that fails the build: low|medium|high|critical'
+        type: string
+        default: 'high'
+      allow_licenses:
+        description: 'Comma-separated SPDX license IDs that are explicitly allowed.'
+        type: string
+        default: ''
+      deny_licenses:
+        description: 'Comma-separated SPDX license IDs that are explicitly forbidden.'
+        type: string
+        default: 'GPL-3.0,AGPL-3.0'
+      snyk_enable:
+        description: 'Run Snyk Open Source. Requires SNYK_TOKEN secret.'
+        type: boolean
+        default: true
+      ecosystem:
+        description: 'Package ecosystem: auto|npm|pip|maven|go'
+        type: string
+        default: 'auto'
+    secrets:
+      SNYK_TOKEN:
+        required: false
+
+concurrency:
+  group: dep-review-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  security-events: write
+
+jobs:
+  review:
+    name: Dependency review
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # -----------------------------------------------------------------------
+      # 1. Native GitHub dependency review. Only meaningful on pull_request
+      #    events; on push it has no diff to consult, so we skip it.
+      # -----------------------------------------------------------------------
+      - name: GitHub dependency review
+        if: github.event_name == 'pull_request'
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: ${{ inputs.fail_on_severity }}
+          deny-licenses: ${{ inputs.deny_licenses }}
+          comment-summary-in-pr: on-failure
+
+      # -----------------------------------------------------------------------
+      # 2. Detect ecosystem so we know which license tool to install.
+      # -----------------------------------------------------------------------
+      - name: Detect ecosystem
+        id: detect
+        env:
+          REQUESTED: ${{ inputs.ecosystem }}
+        run: |
+          if [ "$REQUESTED" != "auto" ]; then
+            echo "ecosystem=$REQUESTED" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if   [ -f package.json ]      ; then echo "ecosystem=npm"    >> "$GITHUB_OUTPUT"
+          elif [ -f requirements.txt ] || [ -f pyproject.toml ]; then
+            echo "ecosystem=pip"    >> "$GITHUB_OUTPUT"
+          elif [ -f pom.xml ]            ; then echo "ecosystem=maven"  >> "$GITHUB_OUTPUT"
+          elif [ -f go.mod ]             ; then echo "ecosystem=go"     >> "$GITHUB_OUTPUT"
+          else echo "ecosystem=unknown" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node.js
+        if: steps.detect.outputs.ecosystem == 'npm'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Python
+        if: steps.detect.outputs.ecosystem == 'pip'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # -----------------------------------------------------------------------
+      # 3. Snyk Open Source. We always emit JSON so the parser can build a
+      #    consistent cross-ecosystem report.
+      # -----------------------------------------------------------------------
+      - name: Install Snyk
+        if: inputs.snyk_enable && env.SNYK_TOKEN != ''
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: |
+          curl -sSL https://static.snyk.io/cli/latest/snyk-linux -o /usr/local/bin/snyk
+          chmod +x /usr/local/bin/snyk
+
+      - name: Run Snyk Open Source
+        if: inputs.snyk_enable && env.SNYK_TOKEN != ''
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: |
+          set +e
+          snyk test \
+            --severity-threshold=${{ inputs.fail_on_severity }} \
+            --json-file-output=snyk-deps.json \
+            --all-projects
+          echo "SNYK_DEPS_EXIT=$?" >> "$GITHUB_ENV"
+
+      # -----------------------------------------------------------------------
+      # 4. License extraction. Per ecosystem, we shell out to a community
+      #    tool that reports installed package metadata.
+      # -----------------------------------------------------------------------
+      - name: Extract licenses (npm)
+        if: steps.detect.outputs.ecosystem == 'npm'
+        run: |
+          npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+          npx --yes license-checker --json --production > licenses.json
+
+      - name: Extract licenses (pip)
+        if: steps.detect.outputs.ecosystem == 'pip'
+        run: |
+          pip install --quiet pip-licenses
+          if [ -f requirements.txt ]; then pip install --quiet -r requirements.txt; fi
+          pip-licenses --format=json --with-urls > licenses.json
+
+      # -----------------------------------------------------------------------
+      # 5. Cross-reference licenses against allow / deny lists.
+      # -----------------------------------------------------------------------
+      - name: Evaluate licenses
+        id: licenses
+        env:
+          ALLOW: ${{ inputs.allow_licenses }}
+          DENY: ${{ inputs.deny_licenses }}
+          ECOSYSTEM: ${{ steps.detect.outputs.ecosystem }}
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib
+
+          allow = {x.strip() for x in os.environ["ALLOW"].split(",") if x.strip()}
+          deny  = {x.strip() for x in os.environ["DENY"].split(",")  if x.strip()}
+          eco   = os.environ["ECOSYSTEM"]
+          path  = pathlib.Path("licenses.json")
+          if not path.exists():
+              print("No license data — skipping evaluation.")
+              with open(os.environ["GITHUB_OUTPUT"], "a") as o:
+                  o.write("violations=0\n")
+              pathlib.Path("licenses-summary.md").write_text("_No license data available._\n")
+              raise SystemExit(0)
+
+          data = json.loads(path.read_text())
+          pkgs = []
+          if eco == "npm":
+              for name, meta in data.items():
+                  pkgs.append({"name": name, "license": meta.get("licenses", "UNKNOWN")})
+          else:  # pip-licenses returns a list
+              for entry in data:
+                  pkgs.append({"name": f"{entry['Name']}=={entry['Version']}",
+                               "license": entry.get("License", "UNKNOWN")})
+
+          violations = []
+          dist = {}
+          for p in pkgs:
+              lic = str(p["license"])
+              dist[lic] = dist.get(lic, 0) + 1
+              if lic in deny:
+                  violations.append({**p, "reason": "denied"})
+              elif allow and lic not in allow and lic != "UNKNOWN":
+                  violations.append({**p, "reason": "not in allow-list"})
+
+          lines = ["### License compliance", ""]
+          lines.append(f"- **Total packages:** {len(pkgs)}")
+          lines.append(f"- **Violations:** {len(violations)}")
+          lines.append("")
+          lines.append("**License distribution:**")
+          lines.append("")
+          lines.append("| License | Count |")
+          lines.append("|---|---|")
+          for lic, n in sorted(dist.items(), key=lambda kv: -kv[1])[:15]:
+              lines.append(f"| `{lic}` | {n} |")
+          if violations:
+              lines.append("")
+              lines.append("**Violations:**")
+              lines.append("")
+              lines.append("| Package | License | Reason |")
+              lines.append("|---|---|---|")
+              for v in violations[:30]:
+                  lines.append(f"| `{v['name']}` | `{v['license']}` | {v['reason']} |")
+          pathlib.Path("licenses-summary.md").write_text("\n".join(lines) + "\n")
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as fh:
+              fh.write(pathlib.Path("licenses-summary.md").read_text())
+          with open(os.environ["GITHUB_OUTPUT"], "a") as o:
+              o.write(f"violations={len(violations)}\n")
+          PY
+
+      - name: Comment on PR
+        if: github.event_name == 'pull_request' && hashFiles('licenses-summary.md') != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('licenses-summary.md', 'utf8');
+            const marker = '<!-- pipeline-armor:deps -->';
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+            const fullBody = marker + '\n## Dependency review\n\n' + body;
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                comment_id: existing.id, body: fullBody,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: context.issue.number, body: fullBody,
+              });
+            }
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-reports
+          path: |
+            snyk-deps.json
+            licenses.json
+            licenses-summary.md
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Enforce gate
+        env:
+          VIOLATIONS: ${{ steps.licenses.outputs.violations }}
+          SNYK_DEPS_EXIT: ${{ env.SNYK_DEPS_EXIT }}
+        run: |
+          fail=0
+          if [ "${VIOLATIONS:-0}" -gt 0 ]; then
+            echo "::error::License violations detected: ${VIOLATIONS}."
+            fail=1
+          fi
+          # Snyk exit codes: 0=clean, 1=vulnerabilities at/above threshold, 2=error.
+          if [ "${SNYK_DEPS_EXIT:-0}" = "1" ]; then
+            echo "::error::Snyk reported dependency vulnerabilities at or above '${{ inputs.fail_on_severity }}'."
+            fail=1
+          fi
+          if [ "$fail" -ne 0 ]; then
+            exit 1
+          fi
+          echo "Dependency review gate passed."

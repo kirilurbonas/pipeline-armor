@@ -1,0 +1,67 @@
+# =============================================================================
+# pipeline-armor :: allowed-licenses.yml
+# -----------------------------------------------------------------------------
+# Default allow-list / deny-list of SPDX license IDs.
+#
+# These map directly to the `allow_licenses` and `deny_licenses` inputs of
+# reusable-dependency-review.yml. The lists below reflect a reasonable default
+# for commercial SaaS workloads. Open-source projects, contracted government
+# work, or projects with copyleft requirements should adjust accordingly.
+#
+# References:
+#   - SPDX License List: https://spdx.org/licenses/
+#   - OSS license categories (Blue Oak Council): https://blueoakcouncil.org/list
+# =============================================================================
+
+# Permissive licenses safe for commercial use without copyleft obligations.
+allowed:
+  - MIT
+  - Apache-2.0
+  - BSD-2-Clause
+  - BSD-3-Clause
+  - ISC
+  - 0BSD
+  - Unlicense
+  - CC0-1.0
+  - Python-2.0
+  - Zlib
+  - BlueOak-1.0.0
+
+# Weak copyleft. Allowed by default — these only require that modifications
+# to the licensed library itself be open-sourced, not your application code.
+# Confirm with legal if your build process statically links these.
+weak_copyleft:
+  - LGPL-2.1
+  - LGPL-2.1-only
+  - LGPL-2.1-or-later
+  - LGPL-3.0
+  - LGPL-3.0-only
+  - LGPL-3.0-or-later
+  - MPL-2.0
+  - EPL-2.0
+  - CDDL-1.0
+
+# Strong copyleft. Denied by default — these can require that any
+# linking application be released under the same license, which is
+# typically incompatible with proprietary commercial code.
+denied:
+  - GPL-2.0
+  - GPL-2.0-only
+  - GPL-2.0-or-later
+  - GPL-3.0
+  - GPL-3.0-only
+  - GPL-3.0-or-later
+  - AGPL-1.0
+  - AGPL-3.0
+  - AGPL-3.0-only
+  - AGPL-3.0-or-later
+  - SSPL-1.0          # MongoDB's variant.
+  - Commons-Clause    # Restricts commercial use; not OSI-approved.
+  - BUSL-1.1          # Business Source License; not OSI-approved.
+
+# Licenses requiring explicit legal review before use.
+review_required:
+  - CC-BY-NC-4.0
+  - CC-BY-SA-4.0
+  - JSON              # "This software shall be used for Good, not Evil." — yes really.
+  - WTFPL             # Unenforceable.
