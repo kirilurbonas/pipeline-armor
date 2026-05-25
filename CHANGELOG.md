@@ -6,6 +6,16 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Bump action pins to current majors: `actions/setup-node@v6`,
+  `actions/setup-go@v6`, `actions/setup-java@v5`,
+  `actions/dependency-review-action@v5`, `docker/setup-buildx-action@v4`.
+- Example apps refreshed against Dependabot suggestions:
+  Node.js (`express@^5.2.1`, `pino@^10.3.1`), Python
+  (`fastapi==0.136.3`, `pydantic==2.13.4`, `structlog==25.5.0`),
+  Terraform (`hashicorp/aws ~> 6.46`).
+
 ## [1.0.0] — 2026-05-25
 
 Initial public release.
