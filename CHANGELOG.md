@@ -6,6 +6,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.0.1] — 2026-06-03
+
 ### Security
 
 - Verify every third-party binary downloaded at runtime against a pinned
@@ -61,5 +63,6 @@ Initial public release.
 - Dependabot configuration covering Actions, npm, pip, and Terraform.
 - `CODEOWNERS`, `SECURITY.md`, `CONTRIBUTING.md`.
 
-[Unreleased]: https://github.com/kirilurbonas/pipeline-armor/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/kirilurbonas/pipeline-armor/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/kirilurbonas/pipeline-armor/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/kirilurbonas/pipeline-armor/releases/tag/v1.0.0
