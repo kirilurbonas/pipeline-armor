@@ -6,8 +6,31 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+
+- Verify every third-party binary downloaded at runtime against a pinned
+  SHA256 instead of trusting the transport: Gitleaks, Trufflehog, and the
+  Snyk CLI now `sha256sum -c` the downloaded artifact and fail closed on a
+  mismatch.
+- Pin the Snyk CLI to a fixed release (`v1.1294.0`) rather than the
+  mutable `latest` channel, in both the SAST and dependency-review
+  workflows.
+- Pin the Trivy bootstrap installer to its release tag (instead of the
+  mutable `main` branch) so the script can't drift; it continues to
+  sha256-verify the trivy binary itself.
+- Escape Markdown table cells in `parse-trivy-report.py` and
+  `parse-checkov-report.py` so scanner-supplied strings (package names,
+  CVE titles, resource paths) can't break — or inject content into — the
+  rendered PR comments and job summaries.
+
+### Added
+
+- `tests/` — a pytest unit suite for the three helper scripts, run in
+  `ci-self-test.yml` alongside the existing smoke tests.
+
 ### Changed
 
+- Harden the affected install steps with `set -euo pipefail`.
 - Bump action pins to current majors: `actions/setup-node@v6`,
   `actions/setup-go@v6`, `actions/setup-java@v5`,
   `actions/dependency-review-action@v5`, `docker/setup-buildx-action@v4`.

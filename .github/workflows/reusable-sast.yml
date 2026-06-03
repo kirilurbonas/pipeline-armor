@@ -117,8 +117,15 @@ jobs:
         if: inputs.snyk_enable && env.SNYK_TOKEN != ''
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+          # Pin a specific CLI release and verify it rather than pulling the
+          # mutable `latest` channel. SNYK_SHA256 is the published
+          # snyk-linux.sha256 for this version; bump both together.
+          SNYK_VERSION: 'v1.1294.0'
+          SNYK_SHA256: 'ac0b4d4f72050a44c143b99015b9550a75999fe88d7fd5bee027fd7c1fda0fbe'
         run: |
-          curl -sSL https://static.snyk.io/cli/latest/snyk-linux -o /usr/local/bin/snyk
+          set -euo pipefail
+          curl -sSL "https://static.snyk.io/cli/${SNYK_VERSION}/snyk-linux" -o /usr/local/bin/snyk
+          echo "${SNYK_SHA256}  /usr/local/bin/snyk" | sha256sum -c -
           chmod +x /usr/local/bin/snyk
           snyk --version
 

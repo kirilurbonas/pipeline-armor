@@ -73,11 +73,15 @@ won't have produced artifacts.
 Verify the topology:
 
 ```
-secret-scan ────┐
-sast            ├──► deploy-gate
-container-scan ─┤
-iac-scan       ─┘
+secret-scan ───────┐
+sast               ├──► deploy-gate
+container-scan     ┤
+iac-scan           ┤
+dependency-review ─┘
 ```
+
+(Only include the scans you actually run — the gate's `required_scans`
+input must match the jobs in its `needs:` list.)
 
 All of these must be in the gate's `needs:` list and must run to
 completion (success or failure — failures still produce artifacts).

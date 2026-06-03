@@ -67,6 +67,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - name: Install test deps
+        run: pip install --quiet 'pytest==8.3.4'
+      - name: Run unit tests
+        run: python3 -m pytest tests/ -q
       - name: Run script smoke tests
         run: |
           # Each script should accept --help cleanly.

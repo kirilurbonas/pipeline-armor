@@ -27,6 +27,10 @@ pip install yamllint actionlint-py
 yamllint .github/ policies/
 actionlint .github/workflows/*.yml
 
+# Unit-test the helper scripts
+pip install pytest
+pytest tests/ -q
+
 # Smoke-test the helper scripts
 python3 scripts/parse-trivy-report.py --help
 python3 scripts/parse-checkov-report.py --help
@@ -38,7 +42,10 @@ To trigger the full self-test, open a PR — the suite runs automatically.
 ## Pull-request checklist
 
 - [ ] YAML lints clean (`yamllint`, `actionlint`).
+- [ ] `pytest tests/` passes; new script logic comes with a unit test.
 - [ ] Any new helper script accepts `--help` and handles empty input.
+- [ ] Runtime binary downloads are pinned to a version and verified
+      against a SHA256 checksum.
 - [ ] Docs updated alongside any new input or output.
 - [ ] Example pipelines still resolve cleanly.
 - [ ] `CHANGELOG.md` updated under `## Unreleased`.

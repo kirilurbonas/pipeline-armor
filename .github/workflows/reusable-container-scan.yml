@@ -95,15 +95,18 @@ jobs:
           echo "size_mb=$size_mb"   >> "$GITHUB_OUTPUT"
 
       # -----------------------------------------------------------------------
-      # 2. Install Trivy. Using the official install script pins a known
-      #    version per release of pipeline-armor — bump TRIVY_VERSION when a
-      #    new CVE database format ships.
+      # 2. Install Trivy. The installer is fetched from the *tagged* release
+      #    (not the mutable `main` branch) so the bootstrap script can't drift
+      #    under us; the script itself then sha256-verifies the trivy binary
+      #    against the release checksums. Bump both refs when a new CVE
+      #    database format ships.
       # -----------------------------------------------------------------------
       - name: Install Trivy
         env:
           TRIVY_VERSION: 'v0.58.0'
         run: |
-          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+          set -euo pipefail
+          curl -sfL "https://raw.githubusercontent.com/aquasecurity/trivy/${TRIVY_VERSION}/contrib/install.sh" \
             | sh -s -- -b /usr/local/bin "$TRIVY_VERSION"
           trivy --version
 
