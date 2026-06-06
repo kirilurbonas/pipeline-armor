@@ -6,6 +6,15 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Migrate all bundled actions off the deprecated Node 20 runtime ahead of
+  GitHub forcing Node 24 on 2026-06-16: `actions/checkout@v5`,
+  `actions/setup-python@v6`, `actions/upload-artifact@v7`,
+  `actions/download-artifact@v8`, `actions/github-script@v8`,
+  `github/codeql-action/upload-sarif@v4`. No input or behavior changes for
+  consumers.
+
 ## [1.0.1] — 2026-06-03
 
 ### Security

@@ -77,7 +77,7 @@ jobs:
       score: ${{ steps.decide.outputs.score }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # -----------------------------------------------------------------------
       # 1. Download every artifact produced by upstream scans in this run. The
@@ -85,7 +85,7 @@ jobs:
       #    workflows in this library.
       # -----------------------------------------------------------------------
       - name: Download upstream scan artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           run-id: ${{ inputs.artifact_run_id || github.run_id }}
           github-token: ${{ github.token }}
@@ -281,7 +281,7 @@ jobs:
 
       - name: Upload deploy gate report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: deploy-gate-report
           path: |
