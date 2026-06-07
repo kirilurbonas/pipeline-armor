@@ -112,7 +112,7 @@ jobs:
       # -----------------------------------------------------------------------
       - name: Install Trivy
         env:
-          TRIVY_VERSION: 'v0.58.0'
+          TRIVY_VERSION: 'v0.71.0'
         run: |
           set -euo pipefail
           curl -sfL "https://raw.githubusercontent.com/aquasecurity/trivy/${TRIVY_VERSION}/contrib/install.sh" \
