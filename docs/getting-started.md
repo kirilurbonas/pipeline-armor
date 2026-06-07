@@ -62,7 +62,10 @@ Open a PR against `main`. You should see, in this order:
 3. `container-scan` runs after `secret-scan` succeeds.
 4. `deploy-gate` runs last, aggregates the results, and either passes
    (allowing your downstream deploy job to proceed) or fails with a
-   detailed report in the job summary.
+   detailed report in the job summary. Declare the job with
+   `if: ${{ always() }}` in the caller workflow so the gate still runs
+   when an upstream scan job fails and only its artifact/report is
+   available.
 
 Every workflow uploads a SARIF file to the **Security** tab of your
 repository. Findings appear in *Security → Code scanning alerts*.

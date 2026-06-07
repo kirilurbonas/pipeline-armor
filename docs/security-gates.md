@@ -71,6 +71,15 @@ but the environment is `dev`, the gate still applies the dev policy on
 top — but the scan has already produced the full finding set, so
 nothing is lost.
 
+Two non-severity signals are also treated as hard gate breaches:
+
+- **Verified secrets** are counted as `critical`.
+- **Dependency policy failures** (for example denied licenses or a
+  failing dependency-review diff) are counted as `critical`.
+
+If a required scan artifact is missing or unreadable, the deploy gate
+fails closed instead of assuming success.
+
 ### Layer 4 — GitHub Environment protection
 
 The `prod` policy sets `environment: prod` on the gate job. That
@@ -113,7 +122,7 @@ The deploy gate computes a 0-100 **security score** that goes into the
 PR comment and is surfaced as a workflow output. The formula is:
 
 ```
-score = max(0, 100 − ( 10·critical + 4·high + 1·medium + 0.25·low ))
+score = max(0, 100 − ( 10·critical + 4·high + 1·medium + 0.25·low ) − 20·missing_evidence )
 ```
 
 This is intentionally simple. It's a trend indicator, not a risk model.

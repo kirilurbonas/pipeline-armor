@@ -24,6 +24,23 @@ from typing import Any
 SEVERITY_ORDER = {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "CRITICAL": 3}
 
 
+def md_cell(value: Any) -> str:
+    """Neutralise a value for safe rendering inside a Markdown table cell.
+
+    Trivy surfaces attacker-influenced strings (package names, CVE titles).
+    A stray ``|`` or newline silently corrupts the table, and a backtick
+    breaks the inline-code span we wrap values in — so we escape all three.
+    """
+    return (
+        str(value)
+        .replace("\\", "\\\\")
+        .replace("|", "\\|")
+        .replace("`", "'")
+        .replace("\r", " ")
+        .replace("\n", " ")
+    )
+
+
 def load_json(path: str) -> Any:
     p = Path(path)
     if not p.exists() or p.stat().st_size == 0:
@@ -112,8 +129,9 @@ def render_summary(args: argparse.Namespace, vulns: list[dict],
         s.append("|---|---|---|---|---|")
         for v in top:
             s.append(
-                f"| `{v['id']}` | `{v['pkg']}` | `{v['installed']}` | "
-                f"`{v['fixed']}` | {v['severity']} |"
+                f"| `{md_cell(v['id'])}` | `{md_cell(v['pkg'])}` | "
+                f"`{md_cell(v['installed'])}` | `{md_cell(v['fixed'])}` | "
+                f"{md_cell(v['severity'])} |"
             )
         s.append("")
     if misconfigs:
@@ -121,7 +139,10 @@ def render_summary(args: argparse.Namespace, vulns: list[dict],
         s.append("| ID | Severity | Title |")
         s.append("|---|---|---|")
         for m in misconfigs[:15]:
-            s.append(f"| `{m['id']}` | {m['severity']} | {m['title']} |")
+            s.append(
+                f"| `{md_cell(m['id'])}` | {md_cell(m['severity'])} | "
+                f"{md_cell(m['title'])} |"
+            )
         s.append("")
     if sbom:
         s.append("### SBOM\n")
@@ -130,7 +151,7 @@ def render_summary(args: argparse.Namespace, vulns: list[dict],
         if licenses:
             s.append("- **Licenses:**")
             for lic, n in sorted(licenses.items(), key=lambda kv: -kv[1])[:10]:
-                s.append(f"  - `{lic}`: {n}")
+                s.append(f"  - `{md_cell(lic)}`: {n}")
         s.append("")
 
     summary_md = "\n".join(s)
@@ -157,7 +178,8 @@ def render_summary(args: argparse.Namespace, vulns: list[dict],
         c.append("|---|---|---|---|")
         for v in top[:5]:
             c.append(
-                f"| `{v['id']}` | `{v['pkg']}` | `{v['fixed']}` | {v['severity']} |"
+                f"| `{md_cell(v['id'])}` | `{md_cell(v['pkg'])}` | "
+                f"`{md_cell(v['fixed'])}` | {md_cell(v['severity'])} |"
             )
     comment_md = "\n".join(c) + "\n"
 

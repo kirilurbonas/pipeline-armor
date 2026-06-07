@@ -71,13 +71,14 @@ Required secrets: `SNYK_TOKEN` (only when `snyk_enable: true`).
 | `deny_licenses` | `GPL-3.0,AGPL-3.0` | Comma-separated denied SPDX IDs. |
 | `snyk_enable` | `true` | Run Snyk Open Source. |
 | `ecosystem` | `auto` | `auto` &#124; `npm` &#124; `pip` &#124; `maven` &#124; `go` |
+| `working_directory` | `.` | Subdirectory to review, useful for monorepos and example apps. |
 
 ## reusable-deploy-gate.yml
 
 | Input | Default | Description |
 | --- | --- | --- |
 | `environment` | _required_ | `dev` &#124; `staging` &#124; `prod` |
-| `required_scans` | `sast,container,iac,secrets` | Scans that must have produced artifacts. |
+| `required_scans` | `sast,container,iac,secrets` | Scans that must have produced artifacts. Match these to the caller job's `needs:` list and run the gate job with `if: ${{ always() }}`. |
 | `bypass_approvers` | `""` | Informational; actual approval enforced via Environments. |
 | `notify_slack` | `false` | Post status to Slack. |
 | `artifact_run_id` | _current_ | Override which run's artifacts are evaluated. |

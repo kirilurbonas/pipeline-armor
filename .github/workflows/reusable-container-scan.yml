@@ -66,7 +66,16 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
+
+      - name: Checkout workflow helpers
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .pipeline-armor
+          sparse-checkout: |
+            scripts
 
       # -----------------------------------------------------------------------
       # 1. Build the image. We use docker buildx with --load so the image lands
@@ -95,15 +104,18 @@ jobs:
           echo "size_mb=$size_mb"   >> "$GITHUB_OUTPUT"
 
       # -----------------------------------------------------------------------
-      # 2. Install Trivy. Using the official install script pins a known
-      #    version per release of pipeline-armor — bump TRIVY_VERSION when a
-      #    new CVE database format ships.
+      # 2. Install Trivy. The installer is fetched from the *tagged* release
+      #    (not the mutable `main` branch) so the bootstrap script can't drift
+      #    under us; the script itself then sha256-verifies the trivy binary
+      #    against the release checksums. Bump both refs when a new CVE
+      #    database format ships.
       # -----------------------------------------------------------------------
       - name: Install Trivy
         env:
           TRIVY_VERSION: 'v0.58.0'
         run: |
-          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+          set -euo pipefail
+          curl -sfL "https://raw.githubusercontent.com/aquasecurity/trivy/${TRIVY_VERSION}/contrib/install.sh" \
             | sh -s -- -b /usr/local/bin "$TRIVY_VERSION"
           trivy --version
 
@@ -133,7 +145,7 @@ jobs:
 
       - name: Upload Trivy SARIF
         if: hashFiles('trivy.sarif') != ''
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy.sarif
           category: trivy-image
@@ -165,7 +177,7 @@ jobs:
 
       - name: Summarize SBOM
         if: inputs.enable_sbom
-        run: python3 scripts/generate-sbom-summary.py sbom.json > sbom-summary.json
+        run: python3 .pipeline-armor/scripts/generate-sbom-summary.py sbom.json > sbom-summary.json
 
       # -----------------------------------------------------------------------
       # 6. Parse Trivy results and render a job summary. We do this inline so
@@ -180,7 +192,7 @@ jobs:
           IMAGE_SIZE: ${{ steps.build.outputs.size_mb }}
           FAIL_ON: ${{ inputs.fail_on_severity }}
         run: |
-          python3 scripts/parse-trivy-report.py \
+          python3 .pipeline-armor/scripts/parse-trivy-report.py \
             --report trivy-full.json \
             --config-report trivy-config.json \
             --sbom-summary sbom-summary.json \
@@ -203,7 +215,7 @@ jobs:
 
       - name: Comment on PR
         if: github.event_name == 'pull_request' && hashFiles('trivy-comment.md') != ''
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const fs = require('fs');
@@ -229,7 +241,7 @@ jobs:
 
       - name: Upload artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: container-scan-reports
           path: |

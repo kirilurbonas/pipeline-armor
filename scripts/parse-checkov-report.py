@@ -42,6 +42,28 @@ COMPLIANCE_MAP: dict[str, list[str]] = {
 }
 
 
+def md_cell(value: Any) -> str:
+    """Neutralise a value for safe rendering inside a Markdown table cell.
+
+    Checkov surfaces user-controlled strings (resource names, file paths,
+    check descriptions). A stray ``|`` or newline silently corrupts the
+    table and a backtick breaks the inline-code span we wrap values in.
+    """
+    return (
+        str(value)
+        .replace("\\", "\\\\")
+        .replace("|", "\\|")
+        .replace("`", "'")
+        .replace("\r", " ")
+        .replace("\n", " ")
+    )
+
+
+def md_link_url(url: str) -> str:
+    """Escape a URL so it can't break out of a Markdown ``[text](url)`` span."""
+    return str(url).replace(" ", "%20").replace("(", "%28").replace(")", "%29")
+
+
 def load_report(path: str) -> list[dict]:
     p = Path(path)
     if not p.exists() or p.stat().st_size == 0:
@@ -95,7 +117,8 @@ def main() -> int:
             sev = normalize_severity(check)
             check_id = check.get("check_id", "?")
             file_path = check.get("file_path", "?")
-            file_line = (check.get("file_line_range") or [None])[0]
+            line_range = check.get("file_line_range")
+            file_line = line_range[0] if isinstance(line_range, list) and line_range else None
             failed_checks.append(
                 {
                     "id": check_id,
@@ -110,7 +133,8 @@ def main() -> int:
                 framework_hits[fw] = framework_hits.get(fw, 0) + 1
 
     total = passed + failed + skipped
-    pct = lambda n: f"{(n/total*100):.1f}%" if total else "0.0%"
+    def pct(n: int) -> str:
+        return f"{(n/total*100):.1f}%" if total else "0.0%"
 
     counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
     for c in failed_checks:
@@ -135,10 +159,13 @@ def main() -> int:
         s.append("| Check | Severity | Resource | File | Description |")
         s.append("|---|---|---|---|---|")
         for c in failed_checks[:25]:
-            guideline_link = f"[link]({c['guideline']})" if c['guideline'] else ""
+            guideline_link = (
+                f"[link]({md_link_url(c['guideline'])})" if c['guideline'] else ""
+            )
             s.append(
-                f"| `{c['id']}` | {c['severity']} | `{c['resource']}` | "
-                f"`{c['file']}` | {c['name']} {guideline_link} |"
+                f"| `{md_cell(c['id'])}` | {md_cell(c['severity'])} | "
+                f"`{md_cell(c['resource'])}` | `{md_cell(c['file'])}` | "
+                f"{md_cell(c['name'])} {guideline_link} |"
             )
         s.append("")
     if framework_hits:
@@ -173,7 +200,8 @@ def main() -> int:
         c_lines.append("|---|---|---|")
         for c in failed_checks[:5]:
             c_lines.append(
-                f"| `{c['id']}` | {c['severity']} | `{c['resource']}` |"
+                f"| `{md_cell(c['id'])}` | {md_cell(c['severity'])} | "
+                f"`{md_cell(c['resource'])}` |"
             )
     comment_md = "\n".join(c_lines) + "\n"
 

@@ -39,16 +39,14 @@ jobs:
     name: Lint workflows + policies
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.11'
       - name: Install linters
-        run: pip install --quiet 'yamllint==1.35.1' 'actionlint-py==1.7.7' || true
+        run: pip install --quiet 'yamllint==1.35.1'
       - name: yamllint
-        run: |
-          yamllint -d '{extends: relaxed, rules: {line-length: {max: 200}}}' \
-            .github/workflows/ policies/ || true
+        run: yamllint .github/workflows/ policies/
       - name: actionlint
         uses: raven-actions/actionlint@v2
         with:
@@ -63,16 +61,24 @@ jobs:
     name: Test helper scripts
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.11'
+      - name: Install test deps
+        run: pip install --quiet 'pytest==8.3.4' 'ruff==0.12.0'
+      - name: Ruff
+        run: python3 -m ruff check scripts tests
+      - name: Run unit tests
+        run: python3 -m pytest tests/ -q
       - name: Run script smoke tests
         run: |
           # Each script should accept --help cleanly.
           python3 scripts/parse-trivy-report.py --help
           python3 scripts/parse-checkov-report.py --help
           python3 scripts/generate-sbom-summary.py --help
+          python3 scripts/parse-dependency-report.py --help
+          python3 scripts/evaluate-deploy-gate.py --help
 
           # Empty-input behavior: scripts should produce a valid empty report
           # rather than crashing.
@@ -86,7 +92,17 @@ jobs:
             --report empty.json --fail-on high \
             --summary-out /tmp/s2.md --comment-out /tmp/c2.md --counts-out /tmp/k2.json
           python3 scripts/generate-sbom-summary.py empty.json > /tmp/sbom.json
-          test -s /tmp/k.json && test -s /tmp/k2.json
+          python3 scripts/parse-dependency-report.py \
+            --snyk-report empty.json --fail-on high \
+            --summary-out /tmp/s3.md --comment-out /tmp/c3.md --counts-out /tmp/k3.json
+          mkdir -p /tmp/gate-fixture/container-scan-reports
+          cp /tmp/k.json /tmp/gate-fixture/container-scan-reports/trivy-counts.json
+          python3 scripts/evaluate-deploy-gate.py \
+            --artifacts-dir /tmp/gate-fixture --environment dev \
+            --required-scans container \
+            --run-id self-test \
+            --summary-out /tmp/gate-summary.md --report-out /tmp/gate-report.json
+          test -s /tmp/k.json && test -s /tmp/k2.json && test -s /tmp/k3.json
           echo "Helper-script smoke tests passed."
 
   # ---------------------------------------------------------------------------
@@ -132,3 +148,21 @@ jobs:
       working_directory: examples/python-app
       snyk_enable: false
       fail_on_severity: critical
+
+  example-dependency-review-node:
+    name: Example | dependency-review (Node.js)
+    uses: ./.github/workflows/reusable-dependency-review.yml
+    with:
+      ecosystem: npm
+      working_directory: examples/nodejs-app
+      snyk_enable: false
+      fail_on_severity: critical
+
+  example-container-scan-node:
+    name: Example | container-scan (Node.js)
+    uses: ./.github/workflows/reusable-container-scan.yml
+    with:
+      image_ref: pipeline-armor-node:${{ github.sha }}
+      build_context: examples/nodejs-app
+      fail_on_severity: critical
+      enable_sbom: true
