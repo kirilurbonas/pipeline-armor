@@ -224,6 +224,13 @@ def main() -> int:
             try:
                 sarif_data = json.loads(sarif_path.read_text())
                 for run in sarif_data.get("runs", []):
+                    # Filter out suppressed results so GitHub Code Scanning closes them
+                    if "results" in run:
+                        run["results"] = [
+                            res for res in run["results"]
+                            if not res.get("suppressions")
+                        ]
+                    
                     rules = run.get("tool", {}).get("driver", {}).get("rules", [])
                     for rule in rules:
                         rule_id = rule.get("id")
