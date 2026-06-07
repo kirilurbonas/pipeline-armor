@@ -228,7 +228,8 @@ def main() -> int:
                     for rule in rules:
                         rule_id = rule.get("id")
                         sev = check_severities.get(rule_id, "medium")
-                        score = {"critical": "9.0", "high": "7.0", "medium": "5.0", "low": "2.0"}.get(sev, "5.0")
+                        sev_map = {"critical": "9.0", "high": "7.0", "medium": "5.0", "low": "2.0"}
+                        score = sev_map.get(sev, "5.0")
                         if "properties" not in rule:
                             rule["properties"] = {}
                         rule["properties"]["security-severity"] = score
