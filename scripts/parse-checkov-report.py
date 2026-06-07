@@ -99,23 +99,28 @@ def main() -> int:
     p.add_argument("--summary-out", required=True)
     p.add_argument("--comment-out", required=True)
     p.add_argument("--counts-out", required=True)
+    p.add_argument("--sarif-in", required=False, help="Path to SARIF file to patch with severities")
     args = p.parse_args()
 
     blocks = load_report(args.report)
     passed = failed = skipped = 0
     failed_checks: list[dict] = []
     framework_hits: dict[str, int] = {}
+    check_severities: dict[str, str] = {}
 
     for block in blocks:
         results = (block.get("results") or {})
         for check in results.get("passed_checks", []) or []:
             passed += 1
+            check_severities[check.get("check_id")] = normalize_severity(check)
         for check in results.get("skipped_checks", []) or []:
             skipped += 1
+            check_severities[check.get("check_id")] = normalize_severity(check)
         for check in results.get("failed_checks", []) or []:
             failed += 1
             sev = normalize_severity(check)
             check_id = check.get("check_id", "?")
+            check_severities[check_id] = sev
             file_path = check.get("file_path", "?")
             line_range = check.get("file_line_range")
             file_line = line_range[0] if isinstance(line_range, list) and line_range else None
@@ -212,6 +217,25 @@ def main() -> int:
                     "passed": passed, "failed": failed, "skipped": skipped},
                    indent=2)
     )
+
+    if args.sarif_in:
+        sarif_path = Path(args.sarif_in)
+        if sarif_path.exists():
+            try:
+                sarif_data = json.loads(sarif_path.read_text())
+                for run in sarif_data.get("runs", []):
+                    rules = run.get("tool", {}).get("driver", {}).get("rules", [])
+                    for rule in rules:
+                        rule_id = rule.get("id")
+                        sev = check_severities.get(rule_id, "medium")
+                        score = {"critical": "9.0", "high": "7.0", "medium": "5.0", "low": "2.0"}.get(sev, "5.0")
+                        if "properties" not in rule:
+                            rule["properties"] = {}
+                        rule["properties"]["security-severity"] = score
+                        rule["properties"]["tags"] = ["security", sev.upper()]
+                sarif_path.write_text(json.dumps(sarif_data, indent=2))
+            except Exception as e:
+                print(f"Failed to patch SARIF: {e}", file=sys.stderr)
 
     print(
         f"Checkov: passed={passed} failed={failed} skipped={skipped} "

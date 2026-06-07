@@ -129,16 +129,10 @@ jobs:
             mv checkov.sarif.tmp checkov.sarif
           fi
 
-      - name: Upload Checkov SARIF
-        if: hashFiles('checkov.sarif') != ''
-        uses: github/codeql-action/upload-sarif@v4
-        with:
-          sarif_file: checkov.sarif
-          category: checkov
-
       # -----------------------------------------------------------------------
       # 2. Parse + summarize. The parser script maps Checkov check IDs to
       #    compliance frameworks and computes a breach count for the gate.
+      #    It also patches the SARIF file to include security severities.
       # -----------------------------------------------------------------------
       - name: Parse Checkov report
         id: parse
@@ -150,7 +144,8 @@ jobs:
             --fail-on "$FAIL_ON" \
             --summary-out checkov-summary.md \
             --comment-out checkov-comment.md \
-            --counts-out checkov-counts.json
+            --counts-out checkov-counts.json \
+            --sarif-in checkov.sarif
           cat checkov-summary.md >> "$GITHUB_STEP_SUMMARY"
           python3 - <<'PY'
           import json, os
@@ -159,6 +154,13 @@ jobs:
               for k, v in c.items():
                   f.write(f"{k}={v}\n")
           PY
+
+      - name: Upload Checkov SARIF
+        if: hashFiles('checkov.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: checkov.sarif
+          category: checkov
 
       - name: Comment on PR
         if: github.event_name == 'pull_request' && hashFiles('checkov-comment.md') != ''
