@@ -68,6 +68,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Checkout workflow helpers
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .pipeline-armor
+          sparse-checkout: |
+            scripts
+
       # -----------------------------------------------------------------------
       # 1. Build the image. We use docker buildx with --load so the image lands
       #    in the local daemon and Trivy can scan it without pushing to a
@@ -168,7 +177,7 @@ jobs:
 
       - name: Summarize SBOM
         if: inputs.enable_sbom
-        run: python3 scripts/generate-sbom-summary.py sbom.json > sbom-summary.json
+        run: python3 .pipeline-armor/scripts/generate-sbom-summary.py sbom.json > sbom-summary.json
 
       # -----------------------------------------------------------------------
       # 6. Parse Trivy results and render a job summary. We do this inline so
@@ -183,7 +192,7 @@ jobs:
           IMAGE_SIZE: ${{ steps.build.outputs.size_mb }}
           FAIL_ON: ${{ inputs.fail_on_severity }}
         run: |
-          python3 scripts/parse-trivy-report.py \
+          python3 .pipeline-armor/scripts/parse-trivy-report.py \
             --report trivy-full.json \
             --config-report trivy-config.json \
             --sbom-summary sbom-summary.json \

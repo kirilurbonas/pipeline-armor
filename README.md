@@ -41,12 +41,12 @@ is the opinionated, batteries-included alternative:
 | [reusable-secret-scan.yml](.github/workflows/reusable-secret-scan.yml) | Gitleaks + Trufflehog, baseline-aware, verified-only by default. |
 | [reusable-dependency-review.yml](.github/workflows/reusable-dependency-review.yml) | GitHub native dep review + Snyk OSS + SPDX license enforcement. |
 | [reusable-deploy-gate.yml](.github/workflows/reusable-deploy-gate.yml) | Aggregates every scan, applies env policy, gates the deploy. |
-| [ci-self-test.yml](.github/workflows/ci-self-test.yml) | Dogfoods the entire library on every PR to this repo. |
+| [ci-self-test.yml](.github/workflows/ci-self-test.yml) | Dogfoods the published helper scripts and core reusable workflows on every PR to this repo. |
 
-Helper scripts under [scripts/](scripts/) parse Trivy/Checkov output and
-summarize SBOMs. Policy files under [policies/](policies/) give your
-security team a place to centrally manage severity thresholds and
-license rules.
+Helper scripts under [scripts/](scripts/) parse Trivy/Checkov/Snyk output,
+evaluate deploy gates, and summarize SBOMs. Policy files under
+[policies/](policies/) give your security team a place to centrally manage
+severity thresholds and license rules.
 
 ## Quick start
 
@@ -79,6 +79,7 @@ jobs:
     uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-container-scan.yml@v1
     with: { image_ref: myapp:${{ github.sha }}, enable_sbom: true }
   deploy-gate:
+    if: ${{ always() }}
     needs: [sast, container-scan, dependency-review, secret-scan]
     uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-deploy-gate.yml@v1
     with: { environment: staging, required_scans: 'sast,container,secrets,dependencies' }
@@ -86,6 +87,10 @@ jobs:
 
 That's it. See [docs/getting-started.md](docs/getting-started.md) for the
 full walkthrough.
+
+`deploy-gate` should always be declared with `if: ${{ always() }}` so it
+still aggregates artifacts and emits a final decision when an upstream
+scan job fails.
 
 ## Examples
 
@@ -148,8 +153,8 @@ teams. For supply-chain-critical workloads, pin to a commit SHA.
 ## Contributing
 
 Issues and PRs welcome. The CI self-test (`ci-self-test.yml`) exercises
-every reusable workflow on every PR, so changes are caught quickly. See
-the contribution checklist:
+the published helper scripts and core reusable workflows on every PR, so
+changes are caught quickly. See the contribution checklist:
 
 - [ ] Workflow YAML passes `actionlint` and `yamllint`.
 - [ ] Any new helper script has a smoke test in `ci-self-test.yml`.

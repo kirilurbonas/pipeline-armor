@@ -63,6 +63,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Checkout workflow helpers
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .pipeline-armor
+          sparse-checkout: |
+            scripts
+
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
@@ -136,7 +145,7 @@ jobs:
         env:
           FAIL_ON: ${{ inputs.fail_on_severity }}
         run: |
-          python3 scripts/parse-checkov-report.py \
+          python3 .pipeline-armor/scripts/parse-checkov-report.py \
             --report checkov-results.json \
             --fail-on "$FAIL_ON" \
             --summary-out checkov-summary.md \

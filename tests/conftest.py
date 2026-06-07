@@ -36,3 +36,13 @@ def checkov() -> ModuleType:
 @pytest.fixture(scope="session")
 def sbom() -> ModuleType:
     return _load("generate-sbom-summary.py", "generate_sbom_summary")
+
+
+@pytest.fixture(scope="session")
+def deps() -> ModuleType:
+    return _load("parse-dependency-report.py", "parse_dependency_report")
+
+
+@pytest.fixture(scope="session")
+def deploy_gate() -> ModuleType:
+    return _load("evaluate-deploy-gate.py", "evaluate_deploy_gate")

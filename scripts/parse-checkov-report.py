@@ -133,7 +133,8 @@ def main() -> int:
                 framework_hits[fw] = framework_hits.get(fw, 0) + 1
 
     total = passed + failed + skipped
-    pct = lambda n: f"{(n/total*100):.1f}%" if total else "0.0%"
+    def pct(n: int) -> str:
+        return f"{(n/total*100):.1f}%" if total else "0.0%"
 
     counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
     for c in failed_checks:

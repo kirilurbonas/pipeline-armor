@@ -85,6 +85,8 @@ input must match the jobs in its `needs:` list.)
 
 All of these must be in the gate's `needs:` list and must run to
 completion (success or failure — failures still produce artifacts).
+The gate job itself should use `if: ${{ always() }}` or GitHub will skip
+it as soon as one of those `needs:` jobs fails.
 
 ## Snyk is too noisy
 

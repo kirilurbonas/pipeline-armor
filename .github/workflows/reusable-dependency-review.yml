@@ -38,12 +38,16 @@ on:
         description: 'Package ecosystem: auto|npm|pip|maven|go'
         type: string
         default: 'auto'
+      working_directory:
+        description: 'Path within the repository to review. Defaults to the repository root.'
+        type: string
+        default: '.'
     secrets:
       SNYK_TOKEN:
         required: false
 
 concurrency:
-  group: dep-review-${{ github.workflow }}-${{ github.ref }}
+  group: dep-review-${{ github.workflow }}-${{ github.ref }}-${{ inputs.working_directory }}
   cancel-in-progress: true
 
 permissions:
@@ -60,12 +64,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Checkout workflow helpers
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .pipeline-armor
+          sparse-checkout: |
+            scripts
+
       # -----------------------------------------------------------------------
       # 1. Native GitHub dependency review. Only meaningful on pull_request
       #    events; on push it has no diff to consult, so we skip it.
       # -----------------------------------------------------------------------
       - name: GitHub dependency review
+        id: github_review
         if: github.event_name == 'pull_request'
+        continue-on-error: true
         uses: actions/dependency-review-action@v5
         with:
           fail-on-severity: ${{ inputs.fail_on_severity }}
@@ -79,16 +94,17 @@ jobs:
         id: detect
         env:
           REQUESTED: ${{ inputs.ecosystem }}
+          WORKDIR: ${{ inputs.working_directory }}
         run: |
           if [ "$REQUESTED" != "auto" ]; then
             echo "ecosystem=$REQUESTED" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if   [ -f package.json ]      ; then echo "ecosystem=npm"    >> "$GITHUB_OUTPUT"
-          elif [ -f requirements.txt ] || [ -f pyproject.toml ]; then
+          if   [ -f "$WORKDIR/package.json" ]      ; then echo "ecosystem=npm"    >> "$GITHUB_OUTPUT"
+          elif [ -f "$WORKDIR/requirements.txt" ] || [ -f "$WORKDIR/pyproject.toml" ]; then
             echo "ecosystem=pip"    >> "$GITHUB_OUTPUT"
-          elif [ -f pom.xml ]            ; then echo "ecosystem=maven"  >> "$GITHUB_OUTPUT"
-          elif [ -f go.mod ]             ; then echo "ecosystem=go"     >> "$GITHUB_OUTPUT"
+          elif [ -f "$WORKDIR/pom.xml" ]            ; then echo "ecosystem=maven"  >> "$GITHUB_OUTPUT"
+          elif [ -f "$WORKDIR/go.mod" ]             ; then echo "ecosystem=go"     >> "$GITHUB_OUTPUT"
           else echo "ecosystem=unknown" >> "$GITHUB_OUTPUT"
           fi
 
@@ -125,6 +141,7 @@ jobs:
 
       - name: Run Snyk Open Source
         if: inputs.snyk_enable && env.SNYK_TOKEN != ''
+        working-directory: ${{ inputs.working_directory }}
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         run: |
@@ -141,12 +158,14 @@ jobs:
       # -----------------------------------------------------------------------
       - name: Extract licenses (npm)
         if: steps.detect.outputs.ecosystem == 'npm'
+        working-directory: ${{ inputs.working_directory }}
         run: |
           npm ci --no-audit --no-fund || npm install --no-audit --no-fund
           npx --yes license-checker --json --production > licenses.json
 
       - name: Extract licenses (pip)
         if: steps.detect.outputs.ecosystem == 'pip'
+        working-directory: ${{ inputs.working_directory }}
         run: |
           pip install --quiet pip-licenses
           if [ -f requirements.txt ]; then pip install --quiet -r requirements.txt; fi
@@ -157,6 +176,7 @@ jobs:
       # -----------------------------------------------------------------------
       - name: Evaluate licenses
         id: licenses
+        working-directory: ${{ inputs.working_directory }}
         env:
           ALLOW: ${{ inputs.allow_licenses }}
           DENY: ${{ inputs.deny_licenses }}
@@ -222,13 +242,65 @@ jobs:
               o.write(f"violations={len(violations)}\n")
           PY
 
+      - name: Summarize dependency findings
+        id: summary
+        env:
+          FAIL_ON: ${{ inputs.fail_on_severity }}
+          LICENSE_VIOLATIONS: ${{ steps.licenses.outputs.violations }}
+          GITHUB_REVIEW_OUTCOME: ${{ steps.github_review.outcome }}
+          REPORT_DIR: ${{ inputs.working_directory }}
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+          SNYK_ENABLED: ${{ inputs.snyk_enable }}
+          SNYK_EXIT_CODE: ${{ env.SNYK_DEPS_EXIT }}
+        run: |
+          if [ "$GITHUB_REVIEW_OUTCOME" = "failure" ]; then
+            github_review_failed=1
+          else
+            github_review_failed=0
+          fi
+
+          if [ "$SNYK_ENABLED" = "true" ] && [ -n "${SNYK_TOKEN:-}" ]; then
+            snyk_ran=1
+          else
+            snyk_ran=0
+          fi
+
+          if [ -f "$REPORT_DIR/snyk-deps.json" ]; then
+            snyk_report_present=1
+          else
+            snyk_report_present=0
+          fi
+
+          python3 .pipeline-armor/scripts/parse-dependency-report.py \
+            --snyk-report "$REPORT_DIR/snyk-deps.json" \
+            --fail-on "$FAIL_ON" \
+            --license-violations "${LICENSE_VIOLATIONS:-0}" \
+            --github-review-failed "$github_review_failed" \
+            --snyk-ran "$snyk_ran" \
+            --snyk-report-present "$snyk_report_present" \
+            --snyk-exit-code "${SNYK_EXIT_CODE:-0}" \
+            --summary-out "$REPORT_DIR/dependency-summary.md" \
+            --comment-out "$REPORT_DIR/dependency-comment.md" \
+            --counts-out "$REPORT_DIR/dependency-summary.json"
+          cat "$REPORT_DIR/dependency-summary.md" >> "$GITHUB_STEP_SUMMARY"
+          python3 - <<'PY'
+          import json, os, pathlib
+          data = json.loads(
+              (pathlib.Path(os.environ["REPORT_DIR"]) / "dependency-summary.json").read_text()
+          )
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write(f"breaches={data.get('breaches', 0)}\n")
+          PY
+
       - name: Comment on PR
-        if: github.event_name == 'pull_request' && hashFiles('licenses-summary.md') != ''
+        if: github.event_name == 'pull_request' && hashFiles(format('{0}/dependency-comment.md', inputs.working_directory)) != ''
         uses: actions/github-script@v8
         with:
           script: |
             const fs = require('fs');
-            const body = fs.readFileSync('licenses-summary.md', 'utf8');
+            const path = require('path');
+            const file = path.join('${{ inputs.working_directory }}', 'dependency-comment.md');
+            const body = fs.readFileSync(file, 'utf8');
             const marker = '<!-- pipeline-armor:deps -->';
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
@@ -236,7 +308,7 @@ jobs:
               issue_number: context.issue.number,
             });
             const existing = comments.find(c => c.body && c.body.includes(marker));
-            const fullBody = marker + '\n## Dependency review\n\n' + body;
+            const fullBody = marker + '\n' + body;
             if (existing) {
               await github.rest.issues.updateComment({
                 owner: context.repo.owner, repo: context.repo.repo,
@@ -255,28 +327,21 @@ jobs:
         with:
           name: dependency-reports
           path: |
-            snyk-deps.json
-            licenses.json
-            licenses-summary.md
+            ${{ inputs.working_directory }}/snyk-deps.json
+            ${{ inputs.working_directory }}/licenses.json
+            ${{ inputs.working_directory }}/licenses-summary.md
+            ${{ inputs.working_directory }}/dependency-summary.md
+            ${{ inputs.working_directory }}/dependency-comment.md
+            ${{ inputs.working_directory }}/dependency-summary.json
           if-no-files-found: ignore
           retention-days: 30
 
       - name: Enforce gate
         env:
-          VIOLATIONS: ${{ steps.licenses.outputs.violations }}
-          SNYK_DEPS_EXIT: ${{ env.SNYK_DEPS_EXIT }}
+          BREACHES: ${{ steps.summary.outputs.breaches }}
         run: |
-          fail=0
-          if [ "${VIOLATIONS:-0}" -gt 0 ]; then
-            echo "::error::License violations detected: ${VIOLATIONS}."
-            fail=1
-          fi
-          # Snyk exit codes: 0=clean, 1=vulnerabilities at/above threshold, 2=error.
-          if [ "${SNYK_DEPS_EXIT:-0}" = "1" ]; then
-            echo "::error::Snyk reported dependency vulnerabilities at or above '${{ inputs.fail_on_severity }}'."
-            fail=1
-          fi
-          if [ "$fail" -ne 0 ]; then
+          if [ "${BREACHES:-0}" -gt 0 ]; then
+            echo "::error::Dependency review gate failed: ${BREACHES} breach(es) at or above '${{ inputs.fail_on_severity }}'."
             exit 1
           fi
           echo "Dependency review gate passed."

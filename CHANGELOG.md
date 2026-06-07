@@ -6,6 +6,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `parse-dependency-report.py` and `evaluate-deploy-gate.py` helper
+  scripts, plus pytest coverage for both, to standardize dependency-scan
+  artifacts and make deploy-gate evaluation independently testable.
+- Repo-level Python and YAML lint configuration via `pyproject.toml` and
+  `.yamllint.yml`.
+
 ### Changed
 
 - Migrate all bundled actions off the deprecated Node 20 runtime ahead of
@@ -14,6 +22,18 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `actions/download-artifact@v8`, `actions/github-script@v8`,
   `github/codeql-action/upload-sarif@v4`. No input or behavior changes for
   consumers.
+- Make `reusable-deploy-gate.yml` fail closed when required artifacts are
+  missing or unreadable, and include that evidence state in the final
+  score/report.
+- Standardize dependency-review outputs into a machine-readable summary,
+  treat denied licenses / failed dependency-review diffs as critical gate
+  breaches, and add `working_directory` support for monorepos.
+- Make reusable workflows that depend on helper scripts check out their
+  own workflow source repository, so consumers in other repositories do
+  not need to vendor `scripts/` manually.
+- Model verified secrets as critical deploy-gate breaches and expand
+  `ci-self-test.yml` to lint Python with Ruff and exercise the dependency
+  and container helper paths directly.
 
 ## [1.0.1] — 2026-06-03
 
