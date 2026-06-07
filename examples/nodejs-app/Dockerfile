@@ -10,7 +10,7 @@
 # =============================================================================
 
 # ---- Build ----------------------------------------------------------------
-FROM node:20.18.1-alpine AS builder
+FROM node:22-alpine AS builder
 
 WORKDIR /app
 
@@ -26,7 +26,7 @@ COPY src ./src
 # Distroless gives us a minimal attack surface — no shell, no package
 # manager, no busybox. Trivy will still scan it because language packages
 # are detected via the manifest, not the OS layer.
-FROM gcr.io/distroless/nodejs20-debian12:nonroot
+FROM gcr.io/distroless/nodejs22-debian12:nonroot
 
 WORKDIR /app
 
