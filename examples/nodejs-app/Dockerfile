@@ -26,19 +26,18 @@ COPY src ./src
 # Distroless gives us a minimal attack surface — no shell, no package
 # manager, no busybox. Trivy will still scan it because language packages
 # are detected via the manifest, not the OS layer.
-FROM gcr.io/distroless/nodejs22-debian12:nonroot
+FROM node:22-alpine AS runtime
 
 WORKDIR /app
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 
-# Non-root by default in distroless `nonroot` variant — UID 65532.
-COPY --from=builder --chown=nonroot:nonroot /app /app
+COPY --from=builder --chown=appuser:appgroup /app /app
 
-USER nonroot
+USER appuser
 
 EXPOSE 8080
 
-# Liveness signal for orchestrators.
 HEALTHCHECK --interval=30s --timeout=3s --retries=3 \
-  CMD ["/nodejs/bin/node", "-e", "require('http').get('http://127.0.0.1:8080/healthz', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+  CMD ["node", "-e", "require('http').get('http://127.0.0.1:8080/healthz', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
 
 CMD ["src/app.js"]
