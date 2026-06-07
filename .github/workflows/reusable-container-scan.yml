@@ -215,7 +215,7 @@ jobs:
 
       - name: Comment on PR
         if: github.event_name == 'pull_request' && hashFiles('trivy-comment.md') != ''
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const fs = require('fs');
