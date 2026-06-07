@@ -62,10 +62,10 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Checkout workflow helpers
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
