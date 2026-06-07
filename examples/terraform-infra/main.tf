@@ -27,6 +27,9 @@ provider "aws" {
 // S3 bucket — locked-down baseline.
 // ---------------------------------------------------------------------------
 resource "aws_s3_bucket" "logs" {
+  # checkov:skip=CKV_AWS_144: "Cross-region replication not required for this example"
+  # checkov:skip=CKV2_AWS_61: "Lifecycle configuration not required for this example"
+  # checkov:skip=CKV2_AWS_62: "Event notifications not required for this example"
   bucket = "${var.name_prefix}-logs"
 
   tags = {
@@ -78,6 +81,7 @@ resource "aws_s3_bucket_logging" "logs" {
 // KMS key for the bucket.
 // ---------------------------------------------------------------------------
 resource "aws_kms_key" "logs" {
+  # checkov:skip=CKV2_AWS_64: "KMS key policy not required for this example"
   description             = "KMS key for ${var.name_prefix} log bucket"
   deletion_window_in_days = 30
   enable_key_rotation     = true

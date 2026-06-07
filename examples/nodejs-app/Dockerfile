@@ -23,10 +23,12 @@ RUN npm ci --omit=dev --no-audit --no-fund
 COPY src ./src
 
 # ---- Runtime --------------------------------------------------------------
-# Distroless gives us a minimal attack surface — no shell, no package
-# manager, no busybox. Trivy will still scan it because language packages
-# are detected via the manifest, not the OS layer.
+# We use Alpine to minimize attack surface. We also remove npm to avoid
+# vulnerabilities in its bundled dependencies. Trivy will still scan it.
 FROM node:22-alpine AS runtime
+
+# Remove npm to avoid vulnerabilities in its bundled dependencies
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 
 WORKDIR /app
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
