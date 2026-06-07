@@ -7,7 +7,7 @@
 # =============================================================================
 
 # ---- Build ----------------------------------------------------------------
-FROM python:3.12.7-slim-bookworm AS builder
+FROM python:3.12-slim-bookworm AS builder
 
 # Stop pip from creating __pycache__ inside the venv and from writing the
 # usual chatty progress bars to the build log.
@@ -24,7 +24,7 @@ COPY requirements.txt ./
 RUN pip install --upgrade pip && pip install -r requirements.txt
 
 # ---- Runtime --------------------------------------------------------------
-FROM python:3.12.7-slim-bookworm AS runtime
+FROM python:3.12-slim-bookworm AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
