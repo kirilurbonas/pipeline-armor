@@ -78,3 +78,6 @@ Thumbs.db
 *.crt
 secrets.yml
 secrets.yaml
+
+# ---- Test fixtures are real inputs, never scan output ------------------------
+!tests/fixtures/**

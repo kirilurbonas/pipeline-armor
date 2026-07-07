@@ -4,6 +4,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
+ALL_SCANS = ["sast", "container", "iac", "secrets", "dependencies"]
+
 
 def _write_json(root: Path, relative: str, payload: dict) -> None:
     path = root / relative
@@ -59,6 +62,34 @@ def test_unknown_required_scan_is_reported(deploy_gate, tmp_path):
     report = deploy_gate.evaluate(["custom-scan"], tmp_path, "prod", "run-3")
     assert report["decision"] == "fail"
     assert report["statuses"][0]["status"] == "unknown"
+
+
+def test_blocking_fixture_fails_every_environment(deploy_gate):
+    for env in ("dev", "staging", "prod"):
+        report = deploy_gate.evaluate(ALL_SCANS, FIXTURES / "gate-blocking", env, "fx-1")
+        assert report["decision"] == "fail", f"expected block in {env}"
+        assert report["breaches"] > 0
+        assert report["evidence_failures"] == 0
+
+
+def test_passing_fixture_allows_every_environment(deploy_gate):
+    for env in ("dev", "staging", "prod"):
+        report = deploy_gate.evaluate(ALL_SCANS, FIXTURES / "gate-passing", env, "fx-2")
+        assert report["decision"] == "pass", f"expected allow in {env}"
+        assert report["breaches"] == 0
+        assert report["score"] == 100
+
+
+def test_prod_blocks_on_medium_but_dev_does_not(deploy_gate, tmp_path):
+    _write_json(
+        tmp_path,
+        "container-scan-reports/trivy-counts.json",
+        {"critical": 0, "high": 0, "medium": 2, "low": 0, "breaches": 0},
+    )
+    prod = deploy_gate.evaluate(["container"], tmp_path, "prod", "fx-3")
+    dev = deploy_gate.evaluate(["container"], tmp_path, "dev", "fx-3")
+    assert prod["decision"] == "fail"
+    assert dev["decision"] == "pass"
 
 
 def test_main_writes_summary_and_report(deploy_gate, tmp_path, monkeypatch):

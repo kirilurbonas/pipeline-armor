@@ -46,3 +46,18 @@ def deps() -> ModuleType:
 @pytest.fixture(scope="session")
 def deploy_gate() -> ModuleType:
     return _load("evaluate-deploy-gate.py", "evaluate_deploy_gate")
+
+
+@pytest.fixture(scope="session")
+def sast() -> ModuleType:
+    return _load("summarize-sast-findings.py", "summarize_sast_findings")
+
+
+@pytest.fixture(scope="session")
+def licenses() -> ModuleType:
+    return _load("evaluate-licenses.py", "evaluate_licenses")
+
+
+@pytest.fixture(scope="session")
+def secrets() -> ModuleType:
+    return _load("combine-secret-findings.py", "combine_secret_findings")

@@ -3,6 +3,8 @@
 [![CI Self-Test](https://github.com/kirilurbonas/pipeline-armor/actions/workflows/ci-self-test.yml/badge.svg)](https://github.com/kirilurbonas/pipeline-armor/actions/workflows/ci-self-test.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![SLSA Level 2](https://img.shields.io/badge/SLSA-Level%202-green)](https://slsa.dev/)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/kirilurbonas/pipeline-armor/badge)](https://scorecard.dev/viewer/?uri=github.com/kirilurbonas/pipeline-armor)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](pyproject.toml)
 
 **Production-grade reusable GitHub Actions workflows that bake security
 gates into every stage of CI/CD — SAST, container scanning, IaC scanning,
@@ -92,6 +94,15 @@ full walkthrough.
 still aggregates artifacts and emits a final decision when an upstream
 scan job fails.
 
+## See it in action
+
+Every scan renders a job-summary table and a single, self-updating PR
+comment — severity counts, top findings, license distribution, and the
+final gate decision with a 0–100 security score.
+
+<!-- TODO: screenshot of a job summary + PR comment from a ci-self-test run.
+     Capture from https://github.com/kirilurbonas/pipeline-armor/actions -->
+
 ## Examples
 
 Three runnable example apps live under [examples/](examples/). Each is a
@@ -144,11 +155,27 @@ complete, real-world consumer pipeline:
 - [Policies](policies/) — severity thresholds and license allow/deny
   lists.
 
-## Versioning & pinning
+## Distribution & versioning
+
+Reusable workflows are not listable on the GitHub Marketplace (only
+composite/JS/Docker actions are) — you consume this library directly by
+reference:
+
+```yaml
+uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-sast.yml@v1
+```
 
 Releases follow [SemVer](https://semver.org/). Major-version tags
 (`v1`, `v2`) are kept up to date with the latest minor — safe for most
-teams. For supply-chain-critical workloads, pin to a commit SHA.
+teams. For supply-chain-critical workloads, pin to a commit SHA:
+
+```yaml
+uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-sast.yml@<commit-sha>  # v1.1.0
+```
+
+The library practices what it preaches: every third-party action inside
+these workflows is pinned to a full commit SHA, and every scanner binary
+downloaded at runtime is version-pinned and SHA256-verified.
 
 ## Contributing
 

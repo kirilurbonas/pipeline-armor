@@ -6,22 +6,49 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+
+- Pin every third-party action in `.github/workflows/` to a full commit
+  SHA (with a version comment), matching the hardening guidance this
+  library gives its consumers. Dependabot keeps the pins current.
+- Add an OpenSSF Scorecard workflow (`scorecard.yml`) publishing results
+  to the Security tab and scorecard.dev.
+
 ### Added
 
 - `parse-dependency-report.py` and `evaluate-deploy-gate.py` helper
   scripts, plus pytest coverage for both, to standardize dependency-scan
   artifacts and make deploy-gate evaluation independently testable.
+- Extract the remaining inline workflow Python into unit-tested helper
+  scripts: `summarize-sast-findings.py` (SARIF summary + severity gate
+  counts), `evaluate-licenses.py` (SPDX allow/deny evaluation), and
+  `combine-secret-findings.py` (Gitleaks + Trufflehog merge/dedupe with a
+  redaction guarantee) — with pytest suites for all three.
+- Gate-enforcement fixtures (`tests/fixtures/gate-blocking`,
+  `tests/fixtures/gate-passing`) and a `gate-enforcement` CI job that
+  positively proves findings block the deploy gate and clean reports
+  pass it.
+- Release automation (`release.yml`): tagging `vX.Y.Z` creates a GitHub
+  Release from the matching CHANGELOG section and force-moves the
+  floating major tag.
+- `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1); `SECURITY.md` now
+  points to GitHub private vulnerability reporting.
 - Repo-level Python and YAML lint configuration via `pyproject.toml` and
   `.yamllint.yml`.
 
 ### Changed
 
 - Migrate all bundled actions off the deprecated Node 20 runtime ahead of
-  GitHub forcing Node 24 on 2026-06-16: `actions/checkout@v5`,
+  GitHub forcing Node 24 on 2026-06-16: `actions/checkout@v6`,
   `actions/setup-python@v6`, `actions/upload-artifact@v7`,
-  `actions/download-artifact@v8`, `actions/github-script@v8`,
+  `actions/download-artifact@v8`, `actions/github-script@v9`,
   `github/codeql-action/upload-sarif@v4`. No input or behavior changes for
   consumers.
+- Document the secret-scan severity model (verified findings block;
+  unverified findings — including all Gitleaks findings — are
+  informational) as a known limitation in `docs/security-gates.md`, and
+  clarify in the README that reusable workflows are consumed by
+  reference, not via the GitHub Marketplace.
 - Make `reusable-deploy-gate.yml` fail closed when required artifacts are
   missing or unreadable, and include that evidence state in the final
   score/report.

@@ -1,0 +1,76 @@
+# =============================================================================
+# pipeline-armor :: release.yml
+# -----------------------------------------------------------------------------
+# Release automation for a reusable-workflow library.
+#
+# On every `vX.Y.Z` tag push:
+#   1. Create a GitHub Release whose body is the matching CHANGELOG section.
+#   2. Force-move the floating major tag (`vX`) to the same commit, so
+#      consumers pinned to `@v1` pick up the new minor/patch automatically.
+#
+# Cut a release by following CONTRIBUTING.md: finalize the CHANGELOG, then
+# `git tag -s vX.Y.Z && git push origin vX.Y.Z`. Everything else is automated.
+# =============================================================================
+name: release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Publish release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+        with:
+          fetch-depth: 0
+
+      - name: Extract changelog section
+        id: notes
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          # Pull everything between "## [<version>]" and the next "## [" heading.
+          awk -v ver="$version" '
+            $0 ~ "^## \\[" ver "\\]" { grab = 1; next }
+            grab && /^## \[/ { exit }
+            grab { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "::error::No CHANGELOG.md section found for ${version}. Add one before tagging."
+            exit 1
+          fi
+          echo "Release notes:"
+          cat release-notes.md
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --notes-file release-notes.md \
+            --verify-tag
+
+      - name: Move floating major tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          major="${TAG%%.*}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f "$major" "$TAG"
+          git push -f origin "$major"
+          echo "Moved $major to $TAG."

@@ -12,7 +12,9 @@
 
 **Please do not open a public GitHub issue for security reports.**
 
-Email the maintainer with a clear description of:
+Use [GitHub private vulnerability reporting](https://github.com/kirilurbonas/pipeline-armor/security/advisories/new)
+(the repository's **Security** tab → **Report a vulnerability**) with a
+clear description of:
 
 - The affected workflow / script / policy.
 - The impact (what an attacker can do).
@@ -45,7 +47,10 @@ Out of scope (report directly to the upstream project):
 
 ## Hardening recommendations for consumers
 
-- Pin every `uses:` to a commit SHA in production environments.
+- Pin every `uses:` to a commit SHA in production environments. This
+  repository follows its own advice: every third-party action in
+  `.github/workflows/` is pinned to a full commit SHA with a version
+  comment, and Dependabot keeps the pins current.
 - Store all secrets (`SNYK_TOKEN`, `SLACK_WEBHOOK_URL`, registry creds)
   as GitHub Encrypted Secrets — never inline.
 - Use GitHub Environments with required reviewers to enforce manual

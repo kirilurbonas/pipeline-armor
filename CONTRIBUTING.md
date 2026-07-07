@@ -23,13 +23,19 @@ git clone https://github.com/kirilurbonas/pipeline-armor
 cd pipeline-armor
 
 # Lint workflows + policy YAML
-pip install yamllint actionlint-py
+pip install yamllint
 yamllint .github/ policies/
+
+# actionlint is a Go binary; CI uses raven-actions/actionlint. Locally:
+brew install actionlint   # or: go install github.com/rhysd/actionlint/cmd/actionlint@latest
+# (pip fallback: `pip install actionlint-py` — recent versions ship an
+#  `actionlint` wrapper, but the native binary matches CI exactly.)
 actionlint .github/workflows/*.yml
 
-# Unit-test the helper scripts
-pip install pytest
+# Unit-test and lint the helper scripts
+pip install pytest ruff
 pytest tests/ -q
+ruff check scripts tests
 
 # Smoke-test the helper scripts
 python3 scripts/parse-trivy-report.py --help
@@ -63,4 +69,4 @@ To trigger the full self-test, open a PR — the suite runs automatically.
 
 ## Code of conduct
 
-Be kind. We follow the [Contributor Covenant](https://www.contributor-covenant.org/version/2/1/code_of_conduct/).
+Be kind. We follow the [Contributor Covenant](CODE_OF_CONDUCT.md).

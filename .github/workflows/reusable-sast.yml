@@ -75,9 +75,18 @@ jobs:
       #    suppress findings that already exist on the base branch.
       # -----------------------------------------------------------------------
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
         with:
           fetch-depth: 0
+
+      - name: Checkout workflow helpers
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .pipeline-armor
+          sparse-checkout: |
+            scripts
 
       # -----------------------------------------------------------------------
       # 2. Language runtime. We always need Python available because Semgrep
@@ -85,26 +94,26 @@ jobs:
       #    language so that Snyk Code can resolve package manifests.
       # -----------------------------------------------------------------------
       - name: Setup Python (Semgrep runtime)
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
         with:
           python-version: '3.11'
 
       - name: Setup Node.js
         if: inputs.language == 'javascript'
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6.4.0
         with:
           node-version: '20'
 
       - name: Setup Java
         if: inputs.language == 'java'
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@1bcf9fb12cf4aa7d266a90ae39939e61372fe520  # v5.4.0
         with:
           distribution: 'temurin'
           java-version: '21'
 
       - name: Setup Go
         if: inputs.language == 'go'
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6.5.0
         with:
           go-version: 'stable'
 
@@ -146,7 +155,7 @@ jobs:
 
       - name: Upload Snyk SARIF to Security tab
         if: inputs.snyk_enable && inputs.sarif_upload && env.SNYK_TOKEN != '' && hashFiles(format('{0}/snyk-sast.sarif', inputs.working_directory)) != ''
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@54f647b7e1bb85c95cddabcd46b0c578ec92bc1a  # v4.36.3
         with:
           sarif_file: ${{ inputs.working_directory }}/snyk-sast.sarif
           category: snyk-code
@@ -172,15 +181,15 @@ jobs:
 
       - name: Upload Semgrep SARIF to Security tab
         if: inputs.sarif_upload && hashFiles(format('{0}/semgrep.sarif', inputs.working_directory)) != ''
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@54f647b7e1bb85c95cddabcd46b0c578ec92bc1a  # v4.36.3
         with:
           sarif_file: ${{ inputs.working_directory }}/semgrep.sarif
           category: semgrep
 
       # -----------------------------------------------------------------------
-      # 5. Findings summary. We use a small inline Python script so we don't
-      #    depend on jq's specific SARIF idioms across runners, and so we can
-      #    render the GitHub Actions job summary table consistently.
+      # 5. Findings summary. Delegated to a helper script (unit-tested in
+      #    tests/) so the SARIF-parsing and severity-normalization logic is
+      #    not duplicated inline in YAML.
       # -----------------------------------------------------------------------
       - name: Summarize findings
         id: summary
@@ -188,105 +197,14 @@ jobs:
         env:
           FAIL_ON: ${{ inputs.fail_on_severity }}
         run: |
-          python3 - <<'PY'
-          import json, os, pathlib, sys
-
-          SEVERITY_ORDER = {"low": 0, "medium": 1, "high": 2, "critical": 3}
-          fail_on = os.environ["FAIL_ON"].lower()
-          fail_threshold = SEVERITY_ORDER[fail_on]
-
-          def load(path):
-              p = pathlib.Path(path)
-              if not p.exists() or p.stat().st_size == 0:
-                  return None
-              try:
-                  return json.loads(p.read_text())
-              except json.JSONDecodeError:
-                  return None
-
-          def normalize_severity(s):
-              # Snyk uses "error/warning/note"; Semgrep uses "ERROR/WARNING/INFO";
-              # SARIF has level. We normalize everything to low/medium/high/critical.
-              if not s:
-                  return "low"
-              s = s.lower()
-              return {
-                  "error": "high", "warning": "medium", "note": "low",
-                  "info": "low", "none": "low",
-                  "critical": "critical", "high": "high",
-                  "medium": "medium", "low": "low",
-              }.get(s, "low")
-
-          findings = []
-          for path, tool in [("snyk-sast.sarif", "snyk"), ("semgrep.sarif", "semgrep")]:
-              data = load(path)
-              if not data:
-                  continue
-              for run in data.get("runs", []):
-                  for result in run.get("results", []):
-                      sev = normalize_severity(
-                          result.get("properties", {}).get("security-severity")
-                          or result.get("level")
-                      )
-                      rule = result.get("ruleId", "unknown")
-                      msg = (result.get("message", {}) or {}).get("text", "")
-                      loc = ""
-                      for l in result.get("locations", []) or []:
-                          art = l.get("physicalLocation", {}).get("artifactLocation", {})
-                          region = l.get("physicalLocation", {}).get("region", {})
-                          loc = f"{art.get('uri','?')}:{region.get('startLine','?')}"
-                          break
-                      findings.append({
-                          "tool": tool, "rule": rule, "severity": sev,
-                          "message": msg[:140], "location": loc,
-                      })
-
-          counts = {"low": 0, "medium": 0, "high": 0, "critical": 0}
-          for f in findings:
-              counts[f["severity"]] += 1
-
-          summary = pathlib.Path(os.environ["GITHUB_STEP_SUMMARY"])
-          with summary.open("a") as fh:
-              fh.write("## SAST Results\n\n")
-              fh.write("| Severity | Count |\n|---|---|\n")
-              for sev in ("critical", "high", "medium", "low"):
-                  fh.write(f"| {sev.title()} | {counts[sev]} |\n")
-              fh.write(f"\n**Fail threshold:** `{fail_on}` and above.\n\n")
-              if findings:
-                  fh.write("### Top findings\n\n")
-                  fh.write("| Tool | Severity | Rule | Location | Message |\n")
-                  fh.write("|---|---|---|---|---|\n")
-                  ranked = sorted(
-                      findings,
-                      key=lambda f: -SEVERITY_ORDER[f["severity"]],
-                  )[:5]
-                  for f in ranked:
-                      fh.write(
-                          f"| {f['tool']} | {f['severity']} | `{f['rule']}` |"
-                          f" `{f['location']}` | {f['message']} |\n"
-                      )
-              fh.write(
-                  "\nSee the [Security tab]"
-                  "(../../security/code-scanning) for the full list.\n"
-              )
-
-          # Surface counts for downstream steps.
-          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
-              for sev, n in counts.items():
-                  out.write(f"{sev}={n}\n")
-
-          # Persist a compact JSON for the PR comment step.
-          pathlib.Path("sast-findings.json").write_text(json.dumps({
-              "counts": counts,
-              "top": sorted(findings, key=lambda f: -SEVERITY_ORDER[f['severity']])[:10],
-          }))
-
-          # Decide pass/fail.
-          breaches = sum(
-              counts[s] for s in counts if SEVERITY_ORDER[s] >= fail_threshold
-          )
-          pathlib.Path("sast-breaches").write_text(str(breaches))
-          PY
+          python3 "$GITHUB_WORKSPACE/.pipeline-armor/scripts/summarize-sast-findings.py" \
+            --snyk-sarif snyk-sast.sarif \
+            --semgrep-sarif semgrep.sarif \
+            --fail-on "$FAIL_ON" \
+            --summary-out "$GITHUB_STEP_SUMMARY" \
+            --outputs-out "$GITHUB_OUTPUT" \
+            --findings-out sast-findings.json \
+            --breaches-out sast-breaches
 
       # -----------------------------------------------------------------------
       # 6. PR comment. Skipped on push events. We use actions/github-script to
@@ -295,7 +213,7 @@ jobs:
       # -----------------------------------------------------------------------
       - name: Comment on PR
         if: github.event_name == 'pull_request'
-        uses: actions/github-script@v9
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9.0.0
         with:
           script: |
             const fs = require('fs');
@@ -347,7 +265,7 @@ jobs:
       # -----------------------------------------------------------------------
       - name: Upload scan artifacts
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: sast-reports
           path: |

@@ -39,8 +39,8 @@ jobs:
     name: Lint workflows + policies
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
         with:
           python-version: '3.11'
       - name: Install linters
@@ -48,7 +48,7 @@ jobs:
       - name: yamllint
         run: yamllint .github/workflows/ policies/
       - name: actionlint
-        uses: raven-actions/actionlint@v2
+        uses: raven-actions/actionlint@3d39aea434753780c3b3d4a1a31c854b4dbf49d7  # v2.2.0
         with:
           files: ".github/workflows/*.yml"
 
@@ -61,8 +61,8 @@ jobs:
     name: Test helper scripts
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
         with:
           python-version: '3.11'
       - name: Install test deps
@@ -79,6 +79,9 @@ jobs:
           python3 scripts/generate-sbom-summary.py --help
           python3 scripts/parse-dependency-report.py --help
           python3 scripts/evaluate-deploy-gate.py --help
+          python3 scripts/summarize-sast-findings.py --help
+          python3 scripts/evaluate-licenses.py --help
+          python3 scripts/combine-secret-findings.py --help
 
           # Empty-input behavior: scripts should produce a valid empty report
           # rather than crashing.
@@ -104,6 +107,46 @@ jobs:
             --summary-out /tmp/gate-summary.md --report-out /tmp/gate-report.json
           test -s /tmp/k.json && test -s /tmp/k2.json && test -s /tmp/k3.json
           echo "Helper-script smoke tests passed."
+
+  # ---------------------------------------------------------------------------
+  # Prove the gate actually gates. The example jobs run against clean code and
+  # never produce findings, so this job feeds the deploy-gate evaluator known
+  # bad (and known clean) fixtures and asserts on the decision both ways.
+  # ---------------------------------------------------------------------------
+  gate-enforcement:
+    name: Gate enforcement (positive + negative)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
+        with:
+          python-version: '3.11'
+      - name: Blocking fixtures must fail the gate
+        run: |
+          set -euo pipefail
+          if python3 scripts/evaluate-deploy-gate.py \
+            --artifacts-dir tests/fixtures/gate-blocking \
+            --environment prod \
+            --required-scans sast,container,iac,secrets,dependencies \
+            --run-id gate-negative-test \
+            --summary-out /tmp/block-summary.md \
+            --report-out /tmp/block-report.json; then
+            : # the script itself exits 0; the decision field is what gates
+          fi
+          python3 -c "import json; r = json.load(open('/tmp/block-report.json')); assert r['decision'] == 'fail', r; assert r['breaches'] > 0, r"
+          echo "Blocking fixtures correctly produced decision=fail."
+      - name: Clean fixtures must pass the gate
+        run: |
+          set -euo pipefail
+          python3 scripts/evaluate-deploy-gate.py \
+            --artifacts-dir tests/fixtures/gate-passing \
+            --environment prod \
+            --required-scans sast,container,iac,secrets,dependencies \
+            --run-id gate-positive-test \
+            --summary-out /tmp/pass-summary.md \
+            --report-out /tmp/pass-report.json
+          python3 -c "import json; r = json.load(open('/tmp/pass-report.json')); assert r['decision'] == 'pass', r; assert r['score'] == 100, r"
+          echo "Clean fixtures correctly produced decision=pass."
 
   # ---------------------------------------------------------------------------
   # Exercise the reusable workflows against the bundled examples. These run

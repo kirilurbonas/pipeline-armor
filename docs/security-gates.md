@@ -80,6 +80,25 @@ Two non-severity signals are also treated as hard gate breaches:
 If a required scan artifact is missing or unreadable, the deploy gate
 fails closed instead of assuming success.
 
+#### Known limitation: unverified secrets are informational
+
+The secret-scan severity model is deliberately coarse:
+
+- **Verified** findings (Trufflehog confirmed the credential live against
+  the provider) are counted as `critical` and block the gate.
+- **Unverified** findings — which includes *every* Gitleaks finding, since
+  Gitleaks does not verify — are counted as `low` and are informational
+  only.
+
+This trades sensitivity for signal: hard-failing on regex hits creates
+alert fatigue. The cost is that a real leaked credential that cannot be
+verified (provider offline, detector without a verifier, revoked-but-
+reused key material) will **not** block a deploy on its own. If your
+threat model requires blocking on any detection, review the unverified
+findings table in the job summary on every PR, or lower the deploy-gate
+threshold for the `secrets` scan by treating its `low` count in your own
+policy layer.
+
 ### Layer 4 — GitHub Environment protection
 
 The `prod` policy sets `environment: prod` on the gate job. That

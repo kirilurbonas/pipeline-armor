@@ -1,0 +1,7 @@
+{
+  "counts": {"critical": 2, "high": 1, "medium": 0, "low": 3},
+  "top": [
+    {"tool": "semgrep", "rule": "sql-injection", "severity": "critical", "message": "SQL injection via string concatenation", "location": "src/db.py:42"},
+    {"tool": "semgrep", "rule": "command-injection", "severity": "critical", "message": "Command injection via os.system", "location": "src/util.py:7"}
+  ]
+}
