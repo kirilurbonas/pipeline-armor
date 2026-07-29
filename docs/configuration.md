@@ -41,7 +41,27 @@ Required secrets: `SNYK_TOKEN` (only when `snyk_enable: true`).
 | `skip_files` | `""` | Comma-separated in-image paths to skip. |
 | `enable_sbom` | `true` | Emit a CycloneDX SBOM as an artifact. |
 | `ignore_unfixed` | `true` | Ignore CVEs without an upstream fix available. |
-| `attest_sbom` | `false` | Create a signed attestation over the SBOM file (`actions/attest-sbom`). The caller must grant `id-token: write` and `attestations: write`. Attests the SBOM artifact, not a registry image — image provenance belongs in the workflow that pushes the image. |
+
+To sign the generated SBOM, chain
+[reusable-attest-sbom.yml](../.github/workflows/reusable-attest-sbom.yml)
+after this workflow (see below).
+
+## reusable-attest-sbom.yml
+
+Signed attestation over the SBOM artifact produced by the container scan,
+verifiable with `gh attestation verify`. Standalone (rather than an input
+on container-scan) so the elevated `id-token: write` +
+`attestations: write` permissions are only ever requested by callers that
+opt in — GitHub validates called-workflow permissions at startup even for
+skipped jobs.
+
+| Input | Default | Description |
+| --- | --- | --- |
+| `artifact_name` | `container-scan-reports` | Uploaded artifact containing the SBOM. |
+| `sbom_file` | `sbom.json` | SBOM filename within the artifact. |
+
+The caller job must set `needs:` on the container-scan job and grant
+`contents: read`, `actions: read`, `id-token: write`, `attestations: write`.
 
 ## reusable-iac-scan.yml
 

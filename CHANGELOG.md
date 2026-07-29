@@ -36,9 +36,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `policies/severity-thresholds.yml` (`--policy-file`, with built-in
   fallback) — the policy file is enforcement, not documentation; a unit
   test fails CI if file and built-ins drift.
-- `attest_sbom` input on `reusable-container-scan.yml`: signed attestation
-  over the generated SBOM via `actions/attest-sbom` (separate job, so the
-  elevated permissions are only requested when enabled).
+- `reusable-attest-sbom.yml`: signed attestation over the container-scan
+  SBOM via `actions/attest-sbom`. A standalone opt-in workflow because
+  GitHub validates called-workflow permissions at startup even for skipped
+  jobs — an input on container-scan would have forced every caller to
+  grant `id-token`/`attestations`.
 - End-to-end deploy-gate coverage: `example-deploy-gate` in ci-self-test
   consumes the real example-scan artifacts, and `gate-negative-e2e.yml`
   (scheduled/dispatch) proves the reusable workflow blocks on bad

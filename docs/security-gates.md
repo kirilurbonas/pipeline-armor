@@ -105,10 +105,10 @@ fails on any unverified finding as well (pair it with a curated
 never pushes them, so it deliberately does **not** sign or attest images —
 an attestation over an image that only ever existed in an ephemeral
 runner daemon proves nothing a consumer can verify. What it can attest is
-the **SBOM file** it generates: set `attest_sbom: true` (and grant the
-caller `id-token: write` + `attestations: write`) to produce a signed
-attestation over `sbom.json` via `actions/attest-sbom`, verifiable with
-`gh attestation verify`.
+the **SBOM file** it generates: chain `reusable-attest-sbom.yml` after the
+container scan (granting the caller `id-token: write` +
+`attestations: write`) to produce a signed attestation over `sbom.json`
+via `actions/attest-sbom`, verifiable with `gh attestation verify`.
 
 Image provenance and signing belong in the workflow that pushes the image
 to a registry. In that workflow, after the push:

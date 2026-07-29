@@ -43,6 +43,7 @@ is the opinionated, batteries-included alternative:
 | [reusable-secret-scan.yml](.github/workflows/reusable-secret-scan.yml) | Gitleaks + Trufflehog, baseline-aware, verified-only by default. |
 | [reusable-dependency-review.yml](.github/workflows/reusable-dependency-review.yml) | GitHub native dep review + Snyk OSS + SPDX license enforcement. |
 | [reusable-osv-scan.yml](.github/workflows/reusable-osv-scan.yml) | Token-free full-tree dependency CVE scan via OSV-Scanner / OSV.dev. |
+| [reusable-attest-sbom.yml](.github/workflows/reusable-attest-sbom.yml) | Opt-in signed attestation over the container-scan SBOM. |
 | [reusable-deploy-gate.yml](.github/workflows/reusable-deploy-gate.yml) | Aggregates every scan, applies env policy, gates the deploy. |
 | [ci-self-test.yml](.github/workflows/ci-self-test.yml) | Dogfoods the published helper scripts and core reusable workflows on every PR to this repo. |
 
