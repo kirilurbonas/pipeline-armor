@@ -13,6 +13,7 @@ def _args(**overrides):
         snyk_ran=0,
         snyk_report_present=0,
         snyk_exit_code=0,
+        license_status="evaluated",
     )
     base.update(overrides)
     return argparse.Namespace(**base)

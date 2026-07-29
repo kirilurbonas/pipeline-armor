@@ -94,10 +94,36 @@ This trades sensitivity for signal: hard-failing on regex hits creates
 alert fatigue. The cost is that a real leaked credential that cannot be
 verified (provider offline, detector without a verifier, revoked-but-
 reused key material) will **not** block a deploy on its own. If your
-threat model requires blocking on any detection, review the unverified
-findings table in the job summary on every PR, or lower the deploy-gate
-threshold for the `secrets` scan by treating its `low` count in your own
-policy layer.
+threat model requires blocking on any detection, set
+`fail_on_unverified: true` on `reusable-secret-scan.yml` — the job then
+fails on any unverified finding as well (pair it with a curated
+`baseline_file` to keep accepted false positives from blocking).
+
+## Provenance and attestation
+
+`reusable-container-scan.yml` builds images locally for scanning and
+never pushes them, so it deliberately does **not** sign or attest images —
+an attestation over an image that only ever existed in an ephemeral
+runner daemon proves nothing a consumer can verify. What it can attest is
+the **SBOM file** it generates: set `attest_sbom: true` (and grant the
+caller `id-token: write` + `attestations: write`) to produce a signed
+attestation over `sbom.json` via `actions/attest-sbom`, verifiable with
+`gh attestation verify`.
+
+Image provenance and signing belong in the workflow that pushes the image
+to a registry. In that workflow, after the push:
+
+```yaml
+permissions:
+  id-token: write
+  attestations: write
+steps:
+  - uses: actions/attest-build-provenance@<pin-to-sha>
+    with:
+      subject-name: ghcr.io/you/app
+      subject-digest: ${{ steps.push.outputs.digest }}
+      push-to-registry: true
+```
 
 ### Layer 4 — GitHub Environment protection
 

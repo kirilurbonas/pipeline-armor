@@ -92,6 +92,50 @@ def test_prod_blocks_on_medium_but_dev_does_not(deploy_gate, tmp_path):
     assert dev["decision"] == "pass"
 
 
+def test_policy_file_parses_environments(deploy_gate):
+    policy_file = (
+        Path(__file__).resolve().parent.parent / "policies" / "severity-thresholds.yml"
+    )
+    policies = deploy_gate.parse_policy_file(policy_file)
+    assert policies is not None
+    assert set(policies) >= {"dev", "staging", "prod"}
+
+
+def test_policy_file_matches_builtin_defaults(deploy_gate):
+    """Drift detector: policies/severity-thresholds.yml and the built-in
+    ENV_POLICIES are two statements of the same policy — they must agree."""
+    policy_file = (
+        Path(__file__).resolve().parent.parent / "policies" / "severity-thresholds.yml"
+    )
+    policies = deploy_gate.parse_policy_file(policy_file)
+    assert policies is not None
+    for env, policy in deploy_gate.ENV_POLICIES.items():
+        assert policies[env]["fail_on"] == policy["fail_on"], f"drift in {env}"
+
+
+def test_policy_file_missing_or_garbage_falls_back(deploy_gate, tmp_path):
+    assert deploy_gate.parse_policy_file(tmp_path / "missing.yml") is None
+    garbage = tmp_path / "garbage.yml"
+    garbage.write_text("scanners:\n  sast:\n    fail_on_severity: high\n")
+    assert deploy_gate.parse_policy_file(garbage) is None
+
+
+def test_policy_file_overrides_evaluation(deploy_gate, tmp_path):
+    # A custom policy that makes dev fail on medium.
+    policy = tmp_path / "policy.yml"
+    policy.write_text("environments:\n  dev:\n    fail_on:\n      - medium\n")
+    _write_json(
+        tmp_path,
+        "container-scan-reports/trivy-counts.json",
+        {"critical": 0, "high": 0, "medium": 1, "low": 0, "breaches": 0},
+    )
+    policies = deploy_gate.parse_policy_file(policy)
+    report = deploy_gate.evaluate(
+        ["container"], tmp_path, "dev", "run-p", env_policies=policies
+    )
+    assert report["decision"] == "fail"
+
+
 def test_main_writes_summary_and_report(deploy_gate, tmp_path, monkeypatch):
     _write_json(
         tmp_path,

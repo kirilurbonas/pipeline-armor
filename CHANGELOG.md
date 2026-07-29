@@ -11,11 +11,38 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Pin every third-party action in `.github/workflows/` to a full commit
   SHA (with a version comment), matching the hardening guidance this
   library gives its consumers. Dependabot keeps the pins current.
+- Verify the Trivy download against a pinned SHA256 (previously the only
+  runtime tool installed without checksum verification, via the upstream
+  install.sh).
+- Add a `Snyk pin consistency` lint step failing CI if the duplicated
+  `SNYK_VERSION`/`SNYK_SHA256` pins in the SAST and dependency-review
+  workflows ever drift apart.
 - Add an OpenSSF Scorecard workflow (`scorecard.yml`) publishing results
   to the Security tab and scorecard.dev.
 
 ### Added
 
+- `reusable-osv-scan.yml` + `parse-osv-report.py`: token-free full-tree
+  dependency CVE scanning via OSV-Scanner (pinned, SHA256-verified binary)
+  with SARIF upload, PR comment, and deploy-gate integration (`osv` scan
+  id).
+- Go license extraction (`google/go-licenses`) in the dependency review;
+  the license gate now reports an explicit `unsupported` /
+  `missing` / `evaluated` status instead of silently passing for
+  ecosystems without extraction (maven).
+- `fail_on_unverified` input on `reusable-secret-scan.yml`: opt-in
+  blocking on unverified (e.g. Gitleaks-only) findings.
+- The deploy gate now reads environment thresholds from
+  `policies/severity-thresholds.yml` (`--policy-file`, with built-in
+  fallback) — the policy file is enforcement, not documentation; a unit
+  test fails CI if file and built-ins drift.
+- `attest_sbom` input on `reusable-container-scan.yml`: signed attestation
+  over the generated SBOM via `actions/attest-sbom` (separate job, so the
+  elevated permissions are only requested when enabled).
+- End-to-end deploy-gate coverage: `example-deploy-gate` in ci-self-test
+  consumes the real example-scan artifacts, and `gate-negative-e2e.yml`
+  (scheduled/dispatch) proves the reusable workflow blocks on bad
+  fixtures at the workflow layer.
 - `parse-dependency-report.py` and `evaluate-deploy-gate.py` helper
   scripts, plus pytest coverage for both, to standardize dependency-scan
   artifacts and make deploy-gate evaluation independently testable.
@@ -38,6 +65,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Canonical default deny-list is now `GPL-3.0,AGPL-3.0,SSPL-1.0`,
+  aligned across the workflow default, `policies/severity-thresholds.yml`,
+  and docs.
 - Migrate all bundled actions off the deprecated Node 20 runtime ahead of
   GitHub forcing Node 24 on 2026-06-16: `actions/checkout@v6`,
   `actions/setup-python@v6`, `actions/upload-artifact@v7`,

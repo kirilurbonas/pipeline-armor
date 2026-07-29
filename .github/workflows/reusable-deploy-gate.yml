@@ -26,7 +26,7 @@ on:
         type: string
         required: true
       required_scans:
-        description: 'Comma-separated list of required passing scans: sast,container,iac,secrets,dependencies'
+        description: 'Comma-separated list of required passing scans: sast,container,iac,secrets,dependencies,osv'
         type: string
         default: 'sast,container,iac,secrets'
       bypass_approvers:
@@ -87,6 +87,7 @@ jobs:
           path: .pipeline-armor
           sparse-checkout: |
             scripts
+            policies
 
       # -----------------------------------------------------------------------
       # 1. Download every artifact produced by upstream scans in this run. The
@@ -118,6 +119,7 @@ jobs:
             --environment "$ENVIRONMENT" \
             --required-scans "$REQUIRED_SCANS" \
             --run-id "$RUN_ID" \
+            --policy-file .pipeline-armor/policies/severity-thresholds.yml \
             --summary-out deploy-gate-summary.md \
             --report-out deploy-gate-report.json
           cat deploy-gate-summary.md >> "$GITHUB_STEP_SUMMARY"

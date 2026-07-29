@@ -1,0 +1,91 @@
+# =============================================================================
+# pipeline-armor :: gate-negative-e2e.yml
+# -----------------------------------------------------------------------------
+# Workflow-level negative test of reusable-deploy-gate.yml.
+#
+# ci-self-test's `gate-enforcement` job proves the *evaluator script* blocks
+# on bad fixtures; this workflow proves the *reusable workflow* does — the
+# artifact download, sparse checkout, policy file, and decision→exit-code
+# wiring all run for real against tests/fixtures/gate-blocking.
+#
+# This lives in its own workflow (not ci-self-test) because the fixture
+# artifacts must use the exact names the gate looks for (sast-reports, …),
+# which would collide with the artifacts the example jobs upload in the same
+# run.
+# =============================================================================
+name: gate-negative-e2e
+
+# The `gate` job is EXPECTED to fail here, which marks the run red even
+# though assert-blocked passes (reusable-call jobs don't support
+# continue-on-error). To keep PR checks clean this runs on demand and on a
+# weekly schedule rather than on push/PR — a red run whose assert-blocked
+# job is green is a PASS.
+on:
+  schedule:
+    - cron: '15 5 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: gate-negative-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: read
+  deployments: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  upload-blocking-fixtures:
+    name: Upload blocking fixtures
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+      - name: Upload fixture artifacts under gate artifact names
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: sast-reports
+          path: tests/fixtures/gate-blocking/sast-reports/
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: container-scan-reports
+          path: tests/fixtures/gate-blocking/container-scan-reports/
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: iac-scan-reports
+          path: tests/fixtures/gate-blocking/iac-scan-reports/
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: secret-scan-reports
+          path: tests/fixtures/gate-blocking/secret-scan-reports/
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: dependency-reports
+          path: tests/fixtures/gate-blocking/dependency-reports/
+
+  gate:
+    name: Deploy gate (must fail)
+    needs: [upload-blocking-fixtures]
+    uses: ./.github/workflows/reusable-deploy-gate.yml
+    with:
+      environment: prod
+      required_scans: 'sast,container,iac,secrets,dependencies'
+
+  assert-blocked:
+    name: Assert the gate blocked
+    needs: [gate]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify gate outcome
+        env:
+          GATE_RESULT: ${{ needs.gate.result }}
+        run: |
+          if [ "$GATE_RESULT" != "failure" ]; then
+            echo "::error::Expected the deploy gate to FAIL on blocking fixtures, got '$GATE_RESULT'."
+            exit 1
+          fi
+          echo "Deploy gate correctly blocked on the gate-blocking fixtures."

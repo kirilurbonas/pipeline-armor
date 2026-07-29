@@ -47,6 +47,33 @@ def test_allow_list_violation_but_unknown_is_exempt(licenses):
     assert violations[0]["reason"] == "not in allow-list"
 
 
+def test_load_packages_go_shape(licenses):
+    data = [{"name": "github.com/pkg/errors", "license": "BSD-2-Clause"}, {"bogus": 1}]
+    pkgs = licenses.load_packages(data, "go")
+    assert pkgs[0] == {"name": "github.com/pkg/errors", "license": "BSD-2-Clause"}
+    assert pkgs[1]["license"] == "UNKNOWN"
+
+
+def test_main_unsupported_ecosystem_reports_status(licenses, tmp_path, monkeypatch):
+    summary = tmp_path / "summary.md"
+    outputs = tmp_path / "outputs.txt"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "evaluate-licenses.py",
+            "--licenses-json", str(tmp_path / "licenses.json"),
+            "--ecosystem", "maven",
+            "--summary-out", str(summary),
+            "--outputs-out", str(outputs),
+        ],
+    )
+    assert licenses.main() == 0
+    text = outputs.read_text()
+    assert "violations=0" in text
+    assert "license_status=unsupported" in text
+    assert "not supported" in summary.read_text()
+
+
 def test_main_missing_licenses_file(licenses, tmp_path, monkeypatch):
     summary = tmp_path / "summary.md"
     outputs = tmp_path / "outputs.txt"
@@ -61,7 +88,7 @@ def test_main_missing_licenses_file(licenses, tmp_path, monkeypatch):
         ],
     )
     assert licenses.main() == 0
-    assert outputs.read_text() == "violations=0\n"
+    assert outputs.read_text() == "violations=0\nlicense_status=missing\n"
     assert "No license data" in summary.read_text()
 
 

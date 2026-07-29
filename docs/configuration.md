@@ -41,6 +41,7 @@ Required secrets: `SNYK_TOKEN` (only when `snyk_enable: true`).
 | `skip_files` | `""` | Comma-separated in-image paths to skip. |
 | `enable_sbom` | `true` | Emit a CycloneDX SBOM as an artifact. |
 | `ignore_unfixed` | `true` | Ignore CVEs without an upstream fix available. |
+| `attest_sbom` | `false` | Create a signed attestation over the SBOM file (`actions/attest-sbom`). The caller must grant `id-token: write` and `attestations: write`. Attests the SBOM artifact, not a registry image — image provenance belongs in the workflow that pushes the image. |
 
 ## reusable-iac-scan.yml
 
@@ -59,6 +60,7 @@ Required secrets: `SNYK_TOKEN` (only when `snyk_enable: true`).
 | --- | --- | --- |
 | `scan_depth` | `all` | `staged` &#124; `all` &#124; `diff` |
 | `fail_on_detection` | `true` | Fail when verified secrets are found. |
+| `fail_on_unverified` | `false` | Also fail on unverified findings (e.g. Gitleaks regex hits). Off by default to limit alert fatigue; see [security-gates.md](security-gates.md). |
 | `baseline_file` | `.gitleaks.baseline.json` | Accepted-findings baseline. |
 | `base_ref` | `""` | Base ref for `diff` scans. |
 
@@ -68,22 +70,55 @@ Required secrets: `SNYK_TOKEN` (only when `snyk_enable: true`).
 | --- | --- | --- |
 | `fail_on_severity` | `high` | Severity gate. |
 | `allow_licenses` | `""` | Comma-separated allowed SPDX IDs. Empty = allow anything not denied. |
-| `deny_licenses` | `GPL-3.0,AGPL-3.0` | Comma-separated denied SPDX IDs. |
+| `deny_licenses` | `GPL-3.0,AGPL-3.0,SSPL-1.0` | Comma-separated denied SPDX IDs. |
 | `snyk_enable` | `true` | Run Snyk Open Source. |
 | `ecosystem` | `auto` | `auto` &#124; `npm` &#124; `pip` &#124; `maven` &#124; `go` |
 | `working_directory` | `.` | Subdirectory to review, useful for monorepos and example apps. |
+
+License extraction supports **npm, pip, and go**. For `maven` (and any
+other ecosystem) the license gate reports `unsupported` in the job summary
+and does not evaluate — it is never silently treated as clean. The
+vulnerability scan is unaffected.
+
+## reusable-osv-scan.yml
+
+Token-free dependency vulnerability scanning against the public
+[OSV.dev](https://osv.dev) database. Complements dependency-review:
+GitHub's native action only sees the PR diff and Snyk requires a token,
+while OSV-Scanner reads lockfiles for full-tree coverage with no
+credentials.
+
+| Input | Default | Description |
+| --- | --- | --- |
+| `fail_on_severity` | `high` | `low` &#124; `medium` &#124; `high` &#124; `critical` |
+| `working_directory` | `.` | Subdirectory to scan (lockfiles are discovered recursively). |
+| `sarif_upload` | `true` | Upload SARIF to Security tab. |
+
+Register it in the deploy gate with the `osv` scan id
+(`required_scans: 'sast,container,osv,…'`).
 
 ## reusable-deploy-gate.yml
 
 | Input | Default | Description |
 | --- | --- | --- |
 | `environment` | _required_ | `dev` &#124; `staging` &#124; `prod` |
-| `required_scans` | `sast,container,iac,secrets` | Scans that must have produced artifacts. Match these to the caller job's `needs:` list and run the gate job with `if: ${{ always() }}`. |
+| `required_scans` | `sast,container,iac,secrets` | Scans that must have produced artifacts (`sast`, `container`, `iac`, `secrets`, `dependencies`, `osv`). Match these to the caller job's `needs:` list and run the gate job with `if: ${{ always() }}`. |
 | `bypass_approvers` | `""` | Informational; actual approval enforced via Environments. |
 | `notify_slack` | `false` | Post status to Slack. |
 | `artifact_run_id` | _current_ | Override which run's artifacts are evaluated. |
 
 Outputs: `decision` (`pass`/`fail`), `score` (0-100).
+
+## How helper scripts reach your runner
+
+Several reusable workflows depend on Python helpers under `scripts/` in
+*this* repository. Each such workflow performs a second, sparse checkout of
+its own source (`repository: ${{ job.workflow_repository }}` at
+`ref: ${{ job.workflow_sha }}`) into `.pipeline-armor/` on the runner — the
+exact commit of the workflow you pinned, not a floating branch. Consumers
+never vendor `scripts/` and cannot end up with a script/workflow version
+mismatch. The deploy gate additionally checks out `policies/` and reads
+environment thresholds from `policies/severity-thresholds.yml`.
 
 ## Centralized policy
 

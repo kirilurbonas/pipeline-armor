@@ -49,6 +49,16 @@ on:
         description: 'Ignore vulnerabilities for which no upstream fix exists.'
         type: boolean
         default: true
+      attest_sbom:
+        description: >-
+          Create a signed build attestation over the generated SBOM file via
+          actions/attest-sbom. Requires the caller to grant
+          `id-token: write` and `attestations: write` permissions.
+          Note: this attests the SBOM artifact itself, not a registry image —
+          image provenance/signing belongs in the workflow that pushes the
+          image (see docs/security-gates.md).
+        type: boolean
+        default: false
 
 concurrency:
   group: container-scan-${{ github.workflow }}-${{ github.ref }}-${{ inputs.image_ref }}
@@ -104,19 +114,23 @@ jobs:
           echo "size_mb=$size_mb"   >> "$GITHUB_OUTPUT"
 
       # -----------------------------------------------------------------------
-      # 2. Install Trivy. The installer is fetched from the *tagged* release
-      #    (not the mutable `main` branch) so the bootstrap script can't drift
-      #    under us; the script itself then sha256-verifies the trivy binary
-      #    against the release checksums. Bump both refs when a new CVE
-      #    database format ships.
+      # 2. Install Trivy. Download the release tarball directly and verify it
+      #    against a pinned SHA256 — the same pattern as Gitleaks/Trufflehog/
+      #    Snyk in the sibling workflows. TRIVY_SHA256 is the entry for
+      #    trivy_<ver>_Linux-64bit.tar.gz in the upstream release checksums
+      #    file; bump both together.
       # -----------------------------------------------------------------------
       - name: Install Trivy
         env:
-          TRIVY_VERSION: 'v0.71.0'
+          TRIVY_VERSION: '0.71.0'
+          TRIVY_SHA256: '30a3d22b23f88c233f1658f562fb477cae3b3e8b4761109d515b7698daf85814'
         run: |
           set -euo pipefail
-          curl -sfL "https://raw.githubusercontent.com/aquasecurity/trivy/${TRIVY_VERSION}/contrib/install.sh" \
-            | sh -s -- -b /usr/local/bin "$TRIVY_VERSION"
+          curl -sSLo /tmp/trivy.tar.gz \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          echo "${TRIVY_SHA256}  /tmp/trivy.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/trivy.tar.gz -C /tmp trivy
+          sudo mv /tmp/trivy /usr/local/bin/trivy
           trivy --version
 
       # -----------------------------------------------------------------------
@@ -270,3 +284,35 @@ jobs:
             exit 1
           fi
           echo "Container scan gate passed."
+
+  # ---------------------------------------------------------------------------
+  # Optional SBOM attestation. Lives in its own job (not a step) so the
+  # elevated `id-token`/`attestations` permissions are only requested when
+  # attest_sbom=true — a skipped job never requests a token, keeping the
+  # default path backward compatible for callers with standard permissions.
+  #
+  # This attests the SBOM *file*; image provenance/signing belongs in the
+  # workflow that pushes the image to a registry (this one never pushes).
+  # ---------------------------------------------------------------------------
+  attest:
+    name: Attest SBOM
+    if: inputs.attest_sbom && inputs.enable_sbom
+    needs: [scan]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download SBOM artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: container-scan-reports
+          path: reports
+
+      - name: Attest SBOM
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e  # v4.1.0
+        with:
+          subject-path: reports/sbom.json
+          sbom-path: reports/sbom.json

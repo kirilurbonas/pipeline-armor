@@ -17,6 +17,7 @@ SCAN_ARTIFACTS = {
     "iac": ("iac-scan-reports", "checkov-counts.json"),
     "secrets": ("secret-scan-reports", "secrets-summary.json"),
     "dependencies": ("dependency-reports", "dependency-summary.json"),
+    "osv": ("osv-scan-reports", "osv-counts.json"),
 }
 
 ENV_POLICIES = {
@@ -24,6 +25,48 @@ ENV_POLICIES = {
     "staging": {"fail_on": {"high", "critical"}},
     "prod": {"fail_on": {"medium", "high", "critical"}},
 }
+
+
+def parse_policy_file(path: Path) -> dict[str, dict[str, set[str]]] | None:
+    """Read `environments.<env>.fail_on` lists from severity-thresholds.yml.
+
+    Deliberately a minimal, indentation-aware scanner instead of a YAML
+    dependency: helper scripts are stdlib-only, and the only data the gate
+    needs is a two-level nesting of scalar lists. Returns None when the file
+    is missing, unparseable, or contains no usable environment policies —
+    callers fall back to the built-in ENV_POLICIES.
+    """
+    try:
+        text = path.read_text()
+    except OSError:
+        return None
+
+    policies: dict[str, dict[str, set[str]]] = {}
+    in_environments = False
+    current_env: str | None = None
+    collecting_fail_on = False
+
+    for raw in text.splitlines():
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        indent = len(raw) - len(raw.lstrip(" "))
+        stripped = raw.strip()
+
+        if indent == 0:
+            in_environments = stripped == "environments:"
+            current_env = None
+            collecting_fail_on = False
+        elif in_environments and indent == 2 and stripped.endswith(":"):
+            current_env = stripped[:-1]
+            collecting_fail_on = False
+        elif in_environments and current_env and indent == 4:
+            collecting_fail_on = stripped == "fail_on:"
+        elif collecting_fail_on and current_env and indent == 6 and stripped.startswith("- "):
+            sev = stripped[2:].strip().lower()
+            if sev in SEVERITY_ORDER:
+                policies.setdefault(current_env, {"fail_on": set()})["fail_on"].add(sev)
+
+    return policies or None
 
 
 def md_cell(value: Any) -> str:
@@ -176,12 +219,17 @@ def evaluate_scan(
 
 
 def evaluate(
-    required_scans: list[str], artifacts_dir: Path, environment: str, run_id: str
+    required_scans: list[str],
+    artifacts_dir: Path,
+    environment: str,
+    run_id: str,
+    env_policies: dict[str, dict[str, set[str]]] | None = None,
 ) -> dict[str, Any]:
-    if environment not in ENV_POLICIES:
+    policies = env_policies or ENV_POLICIES
+    if environment not in policies:
         raise ValueError(f"Unsupported environment: {environment}")
 
-    fail_on = ENV_POLICIES[environment]["fail_on"]
+    fail_on = policies[environment]["fail_on"]
     totals = {sev: 0 for sev in SEVERITIES}
     statuses: list[dict[str, Any]] = []
     evidence_failures = 0
@@ -256,6 +304,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--summary-out", required=True)
     parser.add_argument("--report-out", required=True)
+    parser.add_argument(
+        "--policy-file",
+        default=None,
+        help="Optional severity-thresholds.yml; overrides built-in environment "
+        "policies when readable, falls back to built-ins otherwise.",
+    )
     return parser
 
 
@@ -263,7 +317,27 @@ def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
     required_scans = [scan.strip() for scan in args.required_scans.split(",") if scan.strip()]
-    report = evaluate(required_scans, Path(args.artifacts_dir), args.environment, args.run_id)
+
+    env_policies = None
+    policy_source = "built-in"
+    if args.policy_file:
+        env_policies = parse_policy_file(Path(args.policy_file))
+        if env_policies is not None:
+            policy_source = args.policy_file
+        else:
+            print(
+                f"Warning: could not read environment policies from "
+                f"{args.policy_file}; using built-in defaults."
+            )
+
+    report = evaluate(
+        required_scans,
+        Path(args.artifacts_dir),
+        args.environment,
+        args.run_id,
+        env_policies=env_policies,
+    )
+    report["policy"]["source"] = policy_source
     Path(args.report_out).write_text(json.dumps(report, indent=2))
     Path(args.summary_out).write_text(render_summary(report))
     print(

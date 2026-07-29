@@ -13,9 +13,14 @@ security teams without GitHub Actions expertise.
 
 ## How callers consume these
 
-The reusable workflows do not read these files at runtime — they accept
-inputs only, which keeps them stateless and easy to test. Consumers wire
-the policies in one of two ways:
+The **deploy gate reads `severity-thresholds.yml` at runtime**: the
+`environments.<env>.fail_on` lists in this file drive
+`reusable-deploy-gate.yml`'s decision (the gate falls back to identical
+built-in defaults if the file is unreadable, and a unit test —
+`test_policy_file_matches_builtin_defaults` — fails CI if the two ever
+drift). The `scanners:` section and `allowed-licenses.yml` remain
+reference documentation: scan workflows accept inputs only. Consumers wire
+those per-scan values in one of two ways:
 
 1. **Inline inputs**: hand-pick values from `severity-thresholds.yml` and
    pass them via `with:` blocks in your caller workflow. Best for small

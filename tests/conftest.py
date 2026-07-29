@@ -61,3 +61,8 @@ def licenses() -> ModuleType:
 @pytest.fixture(scope="session")
 def secrets() -> ModuleType:
     return _load("combine-secret-findings.py", "combine_secret_findings")
+
+
+@pytest.fixture(scope="session")
+def osv() -> ModuleType:
+    return _load("parse-osv-report.py", "parse_osv_report")

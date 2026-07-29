@@ -14,6 +14,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
+# Ecosystems with a license-extraction step in reusable-dependency-review.yml.
+# Anything else is reported as `license_status=unsupported` so the gate never
+# silently reads "0 violations" for an ecosystem we can't actually inspect.
+SUPPORTED_ECOSYSTEMS = {"npm", "pip", "go"}
+
 
 def parse_spdx_list(raw: str) -> set[str]:
     return {item.strip() for item in raw.split(",") if item.strip()}
@@ -27,6 +32,19 @@ def load_packages(data: Any, ecosystem: str) -> list[dict[str, str]]:
             for name, meta in data.items():
                 meta = meta if isinstance(meta, dict) else {}
                 pkgs.append({"name": name, "license": meta.get("licenses", "UNKNOWN")})
+    elif ecosystem == "go":
+        # The workflow converts go-licenses CSV output into
+        # [{"name": "module", "license": "SPDX-ID"}, ...]
+        if isinstance(data, list):
+            for entry in data:
+                if not isinstance(entry, dict):
+                    continue
+                pkgs.append(
+                    {
+                        "name": str(entry.get("name", "?")),
+                        "license": entry.get("license", "UNKNOWN"),
+                    }
+                )
     else:
         # pip-licenses returns [{"Name": ..., "Version": ..., "License": ...}, ...]
         if isinstance(data, list):
@@ -99,12 +117,27 @@ def main() -> int:
     allow = parse_spdx_list(args.allow)
     deny = parse_spdx_list(args.deny)
 
+    if args.ecosystem not in SUPPORTED_ECOSYSTEMS:
+        print(f"License extraction is not supported for ecosystem '{args.ecosystem}'.")
+        with Path(args.outputs_out).open("a") as out:
+            out.write("violations=0\n")
+            out.write("license_status=unsupported\n")
+        Path(args.summary_out).write_text(
+            f"_License extraction is not supported for ecosystem "
+            f"'{args.ecosystem}'; the license gate was **not** evaluated. "
+            "The vulnerability scan is unaffected._\n"
+        )
+        return 0
+
     path = Path(args.licenses_json)
     if not path.exists():
         print("No license data — skipping evaluation.")
         with Path(args.outputs_out).open("a") as out:
             out.write("violations=0\n")
-        Path(args.summary_out).write_text("_No license data available._\n")
+            out.write("license_status=missing\n")
+        Path(args.summary_out).write_text(
+            "_No license data available; the license gate was **not** evaluated._\n"
+        )
         return 0
 
     try:
@@ -118,6 +151,7 @@ def main() -> int:
     Path(args.summary_out).write_text(render_summary(pkgs, violations, dist))
     with Path(args.outputs_out).open("a") as out:
         out.write(f"violations={len(violations)}\n")
+        out.write("license_status=evaluated\n")
     return 0
 
 

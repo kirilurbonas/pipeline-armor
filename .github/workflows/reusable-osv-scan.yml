@@ -1,0 +1,190 @@
+# =============================================================================
+# pipeline-armor :: reusable-osv-scan.yml
+# -----------------------------------------------------------------------------
+# Dependency vulnerability scan via Google's OSV-Scanner.
+#
+# This is the token-free complement to reusable-dependency-review.yml:
+# GitHub's dependency-review action only sees the PR diff and Snyk requires
+# a SNYK_TOKEN, whereas OSV-Scanner reads lockfiles directly against the
+# public OSV.dev database — full-tree coverage with zero credentials.
+#
+# Findings are summarized in the job summary and an upserted PR comment;
+# SARIF is optionally uploaded to the Security tab; the artifact
+# `osv-scan-reports/osv-counts.json` feeds the deploy gate (`osv` scan id).
+# =============================================================================
+name: reusable-osv-scan
+
+on:
+  workflow_call:
+    inputs:
+      fail_on_severity:
+        description: 'Lowest severity that fails the build: low|medium|high|critical'
+        type: string
+        default: 'high'
+      working_directory:
+        description: 'Path within the repository to scan. Defaults to the repository root.'
+        type: string
+        default: '.'
+      sarif_upload:
+        description: 'Upload SARIF results to the GitHub Security tab.'
+        type: boolean
+        default: true
+
+concurrency:
+  group: osv-scan-${{ github.workflow }}-${{ github.ref }}-${{ inputs.working_directory }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  security-events: write
+  pull-requests: write
+
+jobs:
+  osv:
+    name: OSV scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+
+      - name: Checkout workflow helpers
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .pipeline-armor
+          sparse-checkout: |
+            scripts
+
+      # -----------------------------------------------------------------------
+      # 1. Install osv-scanner: single static binary, pinned version, verified
+      #    against the release SHA256SUMS — same pattern as every other tool
+      #    download in this library.
+      # -----------------------------------------------------------------------
+      - name: Install osv-scanner
+        env:
+          OSV_SCANNER_VERSION: '2.4.0'
+          # SHA256 of osv-scanner_linux_amd64 from the release SHA256SUMS.
+          # Bump alongside OSV_SCANNER_VERSION.
+          OSV_SCANNER_SHA256: '15314940c10d26af9c6649f150b8a47c1262e8fc7e17b1d1029b0e479e8ed8a0'
+        run: |
+          set -euo pipefail
+          curl -sSLo /tmp/osv-scanner \
+            "https://github.com/google/osv-scanner/releases/download/v${OSV_SCANNER_VERSION}/osv-scanner_linux_amd64"
+          echo "${OSV_SCANNER_SHA256}  /tmp/osv-scanner" | sha256sum -c -
+          chmod +x /tmp/osv-scanner
+          sudo mv /tmp/osv-scanner /usr/local/bin/osv-scanner
+          osv-scanner --version
+
+      # -----------------------------------------------------------------------
+      # 2. Scan. Exit codes: 0 = clean, 1 = findings, anything else = tool
+      #    error. We never fail here — the gate step at the end decides.
+      # -----------------------------------------------------------------------
+      - name: Run osv-scanner (JSON)
+        working-directory: ${{ inputs.working_directory }}
+        run: |
+          set +e
+          osv-scanner scan source --recursive \
+            --format json --output-file osv-results.json .
+          echo "OSV_EXIT_CODE=$?" >> "$GITHUB_ENV"
+
+      - name: Run osv-scanner (SARIF)
+        if: inputs.sarif_upload
+        working-directory: ${{ inputs.working_directory }}
+        run: |
+          set +e
+          osv-scanner scan source --recursive \
+            --format sarif --output-file osv.sarif .
+          exit 0
+
+      - name: Upload SARIF to Security tab
+        if: inputs.sarif_upload && hashFiles(format('{0}/osv.sarif', inputs.working_directory)) != ''
+        uses: github/codeql-action/upload-sarif@54f647b7e1bb85c95cddabcd46b0c578ec92bc1a  # v4.36.3
+        with:
+          sarif_file: ${{ inputs.working_directory }}/osv.sarif
+          category: osv-scanner
+
+      # -----------------------------------------------------------------------
+      # 3. Summarize into the job summary, a PR comment, and the counts JSON
+      #    the deploy gate consumes.
+      # -----------------------------------------------------------------------
+      - name: Summarize findings
+        id: summary
+        working-directory: ${{ inputs.working_directory }}
+        env:
+          FAIL_ON: ${{ inputs.fail_on_severity }}
+        run: |
+          python3 "$GITHUB_WORKSPACE/.pipeline-armor/scripts/parse-osv-report.py" \
+            --report osv-results.json \
+            --fail-on "$FAIL_ON" \
+            --scanner-exit-code "${OSV_EXIT_CODE:-0}" \
+            --summary-out osv-summary.md \
+            --comment-out osv-comment.md \
+            --counts-out osv-counts.json
+          cat osv-summary.md >> "$GITHUB_STEP_SUMMARY"
+          breaches=$(python3 -c "import json; print(json.load(open('osv-counts.json')).get('breaches', 0))")
+          tool_errors=$(python3 -c "import json; print(json.load(open('osv-counts.json')).get('tool_errors', 0))")
+          echo "breaches=$breaches" >> "$GITHUB_OUTPUT"
+          echo "tool_errors=$tool_errors" >> "$GITHUB_OUTPUT"
+
+      - name: Comment on PR
+        if: github.event_name == 'pull_request' && hashFiles(format('{0}/osv-comment.md', inputs.working_directory)) != ''
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9.0.0
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const file = path.join('${{ inputs.working_directory }}', 'osv-comment.md');
+            const body = fs.readFileSync(file, 'utf8');
+            const marker = '<!-- pipeline-armor:osv -->';
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+            const fullBody = marker + '\n' + body;
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                comment_id: existing.id, body: fullBody,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: context.issue.number, body: fullBody,
+              });
+            }
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: osv-scan-reports
+          path: |
+            ${{ inputs.working_directory }}/osv-results.json
+            ${{ inputs.working_directory }}/osv.sarif
+            ${{ inputs.working_directory }}/osv-summary.md
+            ${{ inputs.working_directory }}/osv-comment.md
+            ${{ inputs.working_directory }}/osv-counts.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+      # -----------------------------------------------------------------------
+      # 4. Gate — the only step allowed to fail the job.
+      # -----------------------------------------------------------------------
+      - name: Enforce gate
+        env:
+          BREACHES: ${{ steps.summary.outputs.breaches }}
+          TOOL_ERRORS: ${{ steps.summary.outputs.tool_errors }}
+        run: |
+          if [ "${TOOL_ERRORS:-0}" -gt 0 ]; then
+            echo "::error::OSV scan gate failed: scanner reported a tool error; failing closed."
+            exit 1
+          fi
+          if [ "${BREACHES:-0}" -gt 0 ]; then
+            echo "::error::OSV scan gate failed: ${BREACHES} finding(s) at or above '${{ inputs.fail_on_severity }}'."
+            exit 1
+          fi
+          echo "OSV scan gate passed."

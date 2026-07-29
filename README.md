@@ -42,13 +42,18 @@ is the opinionated, batteries-included alternative:
 | [reusable-iac-scan.yml](.github/workflows/reusable-iac-scan.yml) | Checkov for Terraform/CloudFormation/Kubernetes/Dockerfile, with CIS/SOC2/PCI-DSS mapping. |
 | [reusable-secret-scan.yml](.github/workflows/reusable-secret-scan.yml) | Gitleaks + Trufflehog, baseline-aware, verified-only by default. |
 | [reusable-dependency-review.yml](.github/workflows/reusable-dependency-review.yml) | GitHub native dep review + Snyk OSS + SPDX license enforcement. |
+| [reusable-osv-scan.yml](.github/workflows/reusable-osv-scan.yml) | Token-free full-tree dependency CVE scan via OSV-Scanner / OSV.dev. |
 | [reusable-deploy-gate.yml](.github/workflows/reusable-deploy-gate.yml) | Aggregates every scan, applies env policy, gates the deploy. |
 | [ci-self-test.yml](.github/workflows/ci-self-test.yml) | Dogfoods the published helper scripts and core reusable workflows on every PR to this repo. |
 
-Helper scripts under [scripts/](scripts/) parse Trivy/Checkov/Snyk output,
-evaluate deploy gates, and summarize SBOMs. Policy files under
-[policies/](policies/) give your security team a place to centrally manage
-severity thresholds and license rules.
+Nine unit-tested helper scripts under [scripts/](scripts/) do the parsing
+and policy work: Trivy, Checkov, Snyk, OSV, and SAST-SARIF report parsers,
+secret-finding merge/dedupe (with a redaction guarantee), SPDX license
+evaluation, SBOM summaries, and the deploy-gate evaluator. Policy files
+under [policies/](policies/) centrally manage severity thresholds — the
+deploy gate reads
+[severity-thresholds.yml](policies/severity-thresholds.yml) at runtime —
+and license rules.
 
 ## Quick start
 

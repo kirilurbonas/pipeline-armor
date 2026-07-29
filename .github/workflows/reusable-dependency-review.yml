@@ -10,8 +10,9 @@
 #   2. Snyk Open Source: full-tree vulnerability scan, including transitive
 #      dependencies and known-exploit metadata (KEV / OSV cross-references).
 #   3. License compliance: enforces allow/deny SPDX lists. Forbidden by
-#      default: GPL-3.0 and AGPL-3.0 because of their viral terms; teams
-#      with explicit legal approval can override via `allow_licenses`.
+#      default: GPL-3.0, AGPL-3.0, and SSPL-1.0 because of their viral /
+#      service-restrictive terms; teams with explicit legal approval can
+#      override via `allow_licenses` / `deny_licenses`.
 # =============================================================================
 name: reusable-dependency-review
 
@@ -29,7 +30,9 @@ on:
       deny_licenses:
         description: 'Comma-separated SPDX license IDs that are explicitly forbidden.'
         type: string
-        default: 'GPL-3.0,AGPL-3.0'
+        # Canonical default — keep in sync with policies/severity-thresholds.yml
+        # (scanners.dependencies.deny_licenses) and policies/allowed-licenses.yml.
+        default: 'GPL-3.0,AGPL-3.0,SSPL-1.0'
       snyk_enable:
         description: 'Run Snyk Open Source. Requires SNYK_TOKEN secret.'
         type: boolean
@@ -120,6 +123,12 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Setup Go
+        if: steps.detect.outputs.ecosystem == 'go'
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6.5.0
+        with:
+          go-version: 'stable'
+
       # -----------------------------------------------------------------------
       # 3. Snyk Open Source. We always emit JSON so the parser can build a
       #    consistent cross-ecosystem report.
@@ -171,6 +180,18 @@ jobs:
           if [ -f requirements.txt ]; then pip install --quiet -r requirements.txt; fi
           pip-licenses --format=json --with-urls > licenses.json
 
+      - name: Extract licenses (go)
+        if: steps.detect.outputs.ecosystem == 'go'
+        working-directory: ${{ inputs.working_directory }}
+        run: |
+          set -euo pipefail
+          go install github.com/google/go-licenses/v2@v2.0.1
+          go mod download
+          # go-licenses emits CSV (module,url,license); convert to the JSON
+          # shape evaluate-licenses.py expects: [{"name": ..., "license": ...}]
+          "$(go env GOPATH)/bin/go-licenses" report ./... 2>/dev/null > licenses.csv || true
+          python3 -c "import csv,json;R=[r for r in csv.reader(open('licenses.csv')) if r];json.dump([{'name':r[0],'license':r[2] if len(r)>2 else 'UNKNOWN'} for r in R],open('licenses.json','w'))"
+
       # -----------------------------------------------------------------------
       # 5. Cross-reference licenses against allow / deny lists.
       # -----------------------------------------------------------------------
@@ -196,6 +217,7 @@ jobs:
         env:
           FAIL_ON: ${{ inputs.fail_on_severity }}
           LICENSE_VIOLATIONS: ${{ steps.licenses.outputs.violations }}
+          LICENSE_STATUS: ${{ steps.licenses.outputs.license_status }}
           GITHUB_REVIEW_OUTCOME: ${{ steps.github_review.outcome }}
           REPORT_DIR: ${{ inputs.working_directory }}
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
@@ -224,6 +246,7 @@ jobs:
             --snyk-report "$REPORT_DIR/snyk-deps.json" \
             --fail-on "$FAIL_ON" \
             --license-violations "${LICENSE_VIOLATIONS:-0}" \
+            --license-status "${LICENSE_STATUS:-missing}" \
             --github-review-failed "$github_review_failed" \
             --snyk-ran "$snyk_ran" \
             --snyk-report-present "$snyk_report_present" \

@@ -29,6 +29,10 @@ permissions:
   security-events: write
   pull-requests: write
   actions: read
+  # Required by the example-deploy-gate call (reusable-deploy-gate.yml
+  # declares these; a called workflow cannot exceed the caller's grants).
+  deployments: write
+  issues: write
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -51,6 +55,18 @@ jobs:
         uses: raven-actions/actionlint@3d39aea434753780c3b3d4a1a31c854b4dbf49d7  # v2.2.0
         with:
           files: ".github/workflows/*.yml"
+      - name: Snyk pin consistency
+        run: |
+          # SNYK_VERSION/SNYK_SHA256 are pinned in two workflows and must be
+          # bumped in lockstep; fail the build if they ever drift apart.
+          a=$(grep -h "SNYK_VERSION:\|SNYK_SHA256:" .github/workflows/reusable-sast.yml)
+          b=$(grep -h "SNYK_VERSION:\|SNYK_SHA256:" .github/workflows/reusable-dependency-review.yml)
+          if [ "$a" != "$b" ]; then
+            echo "::error::Snyk pin drift between reusable-sast.yml and reusable-dependency-review.yml"
+            diff <(echo "$a") <(echo "$b") || true
+            exit 1
+          fi
+          echo "Snyk pins are consistent."
 
   # ---------------------------------------------------------------------------
   # Self-test the Python parser scripts directly. They have to handle
@@ -82,6 +98,12 @@ jobs:
           python3 scripts/summarize-sast-findings.py --help
           python3 scripts/evaluate-licenses.py --help
           python3 scripts/combine-secret-findings.py --help
+          python3 scripts/parse-osv-report.py --help
+
+          python3 scripts/parse-osv-report.py \
+            --report empty.json --fail-on high \
+            --summary-out /tmp/s4.md --comment-out /tmp/c4.md --counts-out /tmp/k4.json
+          test -s /tmp/k4.json
 
           # Empty-input behavior: scripts should produce a valid empty report
           # rather than crashing.
@@ -209,3 +231,34 @@ jobs:
       build_context: examples/nodejs-app
       fail_on_severity: critical
       enable_sbom: true
+
+  example-osv-scan:
+    name: Example | osv-scan (Node.js)
+    uses: ./.github/workflows/reusable-osv-scan.yml
+    with:
+      working_directory: examples/nodejs-app
+      # The example lockfile legitimately accumulates real CVEs between
+      # Dependabot bumps; gate the self-test on critical only.
+      fail_on_severity: critical
+
+  # ---------------------------------------------------------------------------
+  # End-to-end deploy gate: consumes the artifacts the example jobs above
+  # uploaded, exercising the artifact-download path, the .pipeline-armor
+  # sparse checkout, the policy file, and the decision wiring — the full
+  # consumer experience, not just the evaluator script.
+  # ---------------------------------------------------------------------------
+  example-deploy-gate:
+    name: Example | deploy-gate (dev)
+    needs:
+      - example-secret-scan
+      - example-iac-scan
+      - example-sast-node
+      - example-sast-python
+      - example-dependency-review-node
+      - example-container-scan-node
+      - example-osv-scan
+    if: always()
+    uses: ./.github/workflows/reusable-deploy-gate.yml
+    with:
+      environment: dev
+      required_scans: 'sast,container,iac,secrets,dependencies,osv'

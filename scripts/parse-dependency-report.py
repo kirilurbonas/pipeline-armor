@@ -225,6 +225,12 @@ def render_summary(
         f"- **Snyk enabled:** {'yes' if args.snyk_ran else 'no'}",
         f"- **Snyk report available:** {'yes' if args.snyk_report_present else 'no'}",
         f"- **License violations:** {args.license_violations}",
+        f"- **License gate:** {args.license_status}"
+        + (
+            " ⚠️ (not evaluated — do not read 0 violations as clean)"
+            if args.license_status != "evaluated"
+            else ""
+        ),
         f"- **GitHub dependency review failed:** {'yes' if args.github_review_failed else 'no'}",
         f"- **Tool errors:** {tool_errors}",
         "",
@@ -271,6 +277,12 @@ def render_summary(
             f"License policy violations: **{args.license_violations}** "
             "(counted as critical gate breaches)."
         )
+    if args.license_status != "evaluated":
+        comment.append("")
+        comment.append(
+            f"⚠️ License gate **not evaluated** ({args.license_status}) — "
+            "0 violations does not mean clean."
+        )
     if args.github_review_failed:
         comment.append("")
         comment.append(
@@ -286,6 +298,7 @@ def render_summary(
         "total_vulnerabilities": len(vulns),
         "vulnerability_counts": vuln_counts,
         "license_violations": args.license_violations,
+        "license_status": args.license_status,
         "github_review_failed": bool(args.github_review_failed),
         "snyk_ran": bool(args.snyk_ran),
         "snyk_report_present": bool(args.snyk_report_present),
@@ -301,6 +314,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--snyk-report", required=True, help="Path to snyk-deps.json")
     parser.add_argument("--fail-on", required=True)
     parser.add_argument("--license-violations", type=int, default=0)
+    parser.add_argument(
+        "--license-status",
+        default="evaluated",
+        choices=("evaluated", "missing", "unsupported"),
+        help="Whether the license gate was actually evaluated for this ecosystem.",
+    )
     parser.add_argument("--github-review-failed", type=int, choices=(0, 1), default=0)
     parser.add_argument("--snyk-ran", type=int, choices=(0, 1), default=0)
     parser.add_argument("--snyk-report-present", type=int, choices=(0, 1), default=0)
