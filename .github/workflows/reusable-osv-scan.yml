@@ -100,7 +100,7 @@ jobs:
 
       - name: Upload SARIF to Security tab
         if: inputs.sarif_upload && hashFiles(format('{0}/osv.sarif', inputs.working_directory)) != ''
-        uses: github/codeql-action/upload-sarif@54f647b7e1bb85c95cddabcd46b0c578ec92bc1a  # v4.36.3
+        uses: github/codeql-action/upload-sarif@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81  # v4.37.3
         with:
           sarif_file: ${{ inputs.working_directory }}/osv.sarif
           category: osv-scanner
