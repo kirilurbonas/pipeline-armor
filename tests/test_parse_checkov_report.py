@@ -45,3 +45,115 @@ def test_md_cell_neutralises_breakers(checkov):
 
 def test_md_link_url_escapes_parens(checkov):
     assert checkov.md_link_url("https://x/a(b)c d") == "https://x/a%28b%29c%20d"
+
+
+def _checkov_report(failed=None, passed=0, skipped=0):
+    def _check(check_id, severity=None, **kw):
+        return {
+            "check_id": check_id,
+            "check_name": kw.get("name", "a check"),
+            "resource": kw.get("resource", "aws_s3_bucket.b"),
+            "file_path": "/main.tf",
+            "file_line_range": [3, 9],
+            "severity": severity,
+            "guideline": kw.get("guideline", "https://docs.example/g (1)"),
+        }
+
+    return [
+        {
+            "results": {
+                "passed_checks": [_check(f"CKV_PASS_{i}") for i in range(passed)],
+                "skipped_checks": [_check(f"CKV_SKIP_{i}") for i in range(skipped)],
+                "failed_checks": [_check(cid, sev) for cid, sev in (failed or [])],
+            }
+        }
+    ]
+
+
+def _run_main(checkov, tmp_path, monkeypatch, report, fail_on="high", sarif=None):
+    import json as _json
+
+    report_path = tmp_path / "report.json"
+    report_path.write_text(_json.dumps(report))
+    argv = [
+        "parse-checkov-report.py",
+        "--report", str(report_path),
+        "--fail-on", fail_on,
+        "--summary-out", str(tmp_path / "summary.md"),
+        "--comment-out", str(tmp_path / "comment.md"),
+        "--counts-out", str(tmp_path / "counts.json"),
+    ]
+    if sarif is not None:
+        sarif_path = tmp_path / "checkov.sarif"
+        sarif_path.write_text(_json.dumps(sarif))
+        argv += ["--sarif-in", str(sarif_path)]
+    monkeypatch.setattr("sys.argv", argv)
+    assert checkov.main() == 0
+    return tmp_path
+
+
+def test_main_counts_breaches_and_compliance(checkov, tmp_path, monkeypatch):
+    import json
+
+    out = _run_main(
+        checkov,
+        tmp_path,
+        monkeypatch,
+        _checkov_report(
+            failed=[("CKV_AWS_24", "high"), ("CKV_AWS_19", None), ("CKV_X", "low")],
+            passed=2,
+            skipped=1,
+        ),
+    )
+    counts = json.loads((out / "counts.json").read_text())
+    # None severity defaults to medium; threshold high → 1 breach.
+    assert counts == {
+        "critical": 0, "high": 1, "medium": 1, "low": 1,
+        "breaches": 1, "passed": 2, "failed": 3, "skipped": 1,
+    }
+    summary = (out / "summary.md").read_text()
+    assert "Compliance frameworks affected" in summary
+    assert "CIS-4.1" in summary  # CKV_AWS_24 mapping
+    assert "%28" in summary  # guideline URL parens escaped
+    comment = (out / "comment.md").read_text()
+    assert "Top failing checks" in comment
+
+
+def test_main_sarif_patched_with_security_severity(checkov, tmp_path, monkeypatch):
+    import json
+
+    sarif = {
+        "runs": [
+            {
+                "tool": {"driver": {"rules": [{"id": "CKV_AWS_24"}, {"id": "CKV_NEW"}]}},
+                "results": [
+                    {"ruleId": "CKV_AWS_24"},
+                    {"ruleId": "CKV_SKIP_0", "suppressions": [{"kind": "external"}]},
+                ],
+            }
+        ]
+    }
+    out = _run_main(
+        checkov,
+        tmp_path,
+        monkeypatch,
+        _checkov_report(failed=[("CKV_AWS_24", "critical")]),
+        sarif=sarif,
+    )
+    patched = json.loads((out / "checkov.sarif").read_text())
+    run = patched["runs"][0]
+    # Suppressed results are removed so GitHub closes those alerts.
+    assert [r["ruleId"] for r in run["results"]] == ["CKV_AWS_24"]
+    rules = {r["id"]: r for r in run["tool"]["driver"]["rules"]}
+    assert rules["CKV_AWS_24"]["properties"]["security-severity"] == "9.0"
+    # Rules with no observed severity default to medium.
+    assert rules["CKV_NEW"]["properties"]["security-severity"] == "5.0"
+
+
+def test_main_empty_report_writes_zero_counts(checkov, tmp_path, monkeypatch):
+    import json
+
+    out = _run_main(checkov, tmp_path, monkeypatch, [], fail_on="low")
+    counts = json.loads((out / "counts.json").read_text())
+    assert counts["breaches"] == 0
+    assert counts["failed"] == 0

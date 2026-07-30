@@ -80,7 +80,7 @@ jobs:
 
       - name: Install Checkov
         run: |
-          pip install --quiet 'checkov==3.2.334'
+          pip install --quiet 'checkov==3.3.8'
           checkov --version
 
       # -----------------------------------------------------------------------

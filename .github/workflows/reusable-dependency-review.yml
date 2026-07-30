@@ -140,8 +140,8 @@ jobs:
           # Pin a specific CLI release and verify it rather than pulling the
           # mutable `latest` channel. SNYK_SHA256 is the published
           # snyk-linux.sha256 for this version; bump both together.
-          SNYK_VERSION: 'v1.1294.0'
-          SNYK_SHA256: 'ac0b4d4f72050a44c143b99015b9550a75999fe88d7fd5bee027fd7c1fda0fbe'
+          SNYK_VERSION: 'v1.1306.2'
+          SNYK_SHA256: '948ecc90d929f203a707e8f94478b8b9b64a4bbfc5cfb60916ba830ac91cfcd8'
         run: |
           set -euo pipefail
           curl -sSL "https://static.snyk.io/cli/${SNYK_VERSION}/snyk-linux" -o /usr/local/bin/snyk

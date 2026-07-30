@@ -1,0 +1,100 @@
+# =============================================================================
+# pipeline-armor :: tool-currency.yml
+# -----------------------------------------------------------------------------
+# Weekly staleness check for the scanner CLIs the reusable workflows download
+# at runtime (Gitleaks, Trufflehog, Trivy, Snyk, OSV-Scanner, Semgrep,
+# Checkov). Dependabot keeps the SHA-pinned *actions* current but cannot see
+# these curl/pip pins.
+#
+# When any pin is behind the latest upstream release, a single tracking
+# issue (label: tool-currency) is opened or updated with the report table.
+# When everything is current, the open issue (if any) is closed.
+# =============================================================================
+name: tool-currency
+
+on:
+  schedule:
+    - cron: '45 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    name: Check scanner pins
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+
+      - name: Check tool currency
+        id: currency
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/check-tool-currency.py \
+            --workflows-dir .github/workflows \
+            --report-out currency-report.md \
+            --outputs-out "$GITHUB_OUTPUT" \
+            --github-token "$GH_TOKEN"
+          cat currency-report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open, update, or close the tracking issue
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9.0.0
+        env:
+          STALE: ${{ steps.currency.outputs.stale }}
+        with:
+          script: |
+            const fs = require('fs');
+            const stale = parseInt(process.env.STALE || '0', 10);
+            const title = 'Scanner CLI pins are behind upstream releases';
+            const label = 'tool-currency';
+            const body = fs.readFileSync('currency-report.md', 'utf8')
+              + '\n_Automated report from the `tool-currency` workflow._\n';
+
+            // Ensure the label exists (no-op if it already does).
+            try {
+              await github.rest.issues.createLabel({
+                owner: context.repo.owner, repo: context.repo.repo,
+                name: label, color: 'd93f0b',
+                description: 'Pinned scanner CLI is behind upstream',
+              });
+            } catch (e) { /* already exists */ }
+
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner, repo: context.repo.repo,
+              state: 'open', labels: label,
+            });
+            const existing = issues.find(i => i.title === title);
+
+            if (stale > 0) {
+              if (existing) {
+                await github.rest.issues.update({
+                  owner: context.repo.owner, repo: context.repo.repo,
+                  issue_number: existing.number, body,
+                });
+                core.info(`Updated issue #${existing.number} (${stale} stale).`);
+              } else {
+                const { data: issue } = await github.rest.issues.create({
+                  owner: context.repo.owner, repo: context.repo.repo,
+                  title, body, labels: [label],
+                });
+                core.info(`Opened issue #${issue.number} (${stale} stale).`);
+              }
+            } else if (existing) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: existing.number,
+                body: 'All scanner pins are current again — closing. ✅',
+              });
+              await github.rest.issues.update({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: existing.number, state: 'closed',
+              });
+              core.info(`Closed issue #${existing.number}.`);
+            } else {
+              core.info('All pins current; no issue to manage.');
+            }

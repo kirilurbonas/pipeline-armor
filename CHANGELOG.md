@@ -6,6 +6,37 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+
+- Bump all scanner CLI pins to current upstream releases with fresh
+  verified checksums: Gitleaks 8.21.2→8.30.1, Trufflehog 3.83.7→3.96.0,
+  Trivy 0.71.0→0.72.0, Snyk 1.1294.0→1.1306.2, Semgrep 1.86.0→1.172.0,
+  Checkov 3.2.334→3.3.8 (osv-scanner already current). Semgrep output
+  flags modernized to `--sarif-output`/`--json-output`.
+
+### Added
+
+- `tool-currency.yml` + `check-tool-currency.py`: weekly staleness check
+  for the curl/pip-installed scanner CLIs Dependabot can't see; opens or
+  updates a single `tool-currency` tracking issue when pins fall behind
+  and closes it when they're current again. A unit test asserts the
+  checker's extraction regexes match the real workflow files, so moving a
+  pin without updating the checker fails CI.
+- Coverage floor in CI: pytest now runs with `--cov=scripts
+  --cov-fail-under=80` (currently 87%); `parse-checkov-report.py` gained
+  end-to-end tests for breach counting, compliance mapping, SARIF
+  severity patching, and suppression filtering (23%→97%).
+- `example-dependency-review-pip` self-test job exercising the pip
+  license-extraction path against `examples/python-app`, wired into the
+  E2E deploy gate.
+
+### Fixed
+
+- Removed the `license-checker` devDependency from the Node.js example —
+  the workflow fetches it via `npx --yes`, and its ancient dependency
+  chain carried an unpatchable `brace-expansion` 1.x advisory
+  (GHSA-mh99-v99m-4gvg).
+
 ## [1.1.0] — 2026-07-07
 
 ### Security

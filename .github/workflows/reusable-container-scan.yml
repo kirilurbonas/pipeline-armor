@@ -111,8 +111,8 @@ jobs:
       # -----------------------------------------------------------------------
       - name: Install Trivy
         env:
-          TRIVY_VERSION: '0.71.0'
-          TRIVY_SHA256: '30a3d22b23f88c233f1658f562fb477cae3b3e8b4761109d515b7698daf85814'
+          TRIVY_VERSION: '0.72.0'
+          TRIVY_SHA256: 'bbb64b9695866ce4a7a8f5c9592002c5961cab378577fa3f8a040df362b9b2ea'
         run: |
           set -euo pipefail
           curl -sSLo /tmp/trivy.tar.gz \

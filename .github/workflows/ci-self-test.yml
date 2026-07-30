@@ -82,11 +82,11 @@ jobs:
         with:
           python-version: '3.11'
       - name: Install test deps
-        run: pip install --quiet 'pytest==8.3.4' 'ruff==0.12.0'
+        run: pip install --quiet 'pytest==8.3.4' 'pytest-cov==6.0.0' 'ruff==0.12.0'
       - name: Ruff
         run: python3 -m ruff check scripts tests
-      - name: Run unit tests
-        run: python3 -m pytest tests/ -q
+      - name: Run unit tests (with coverage floor)
+        run: python3 -m pytest tests/ -q --cov=scripts --cov-report=term --cov-fail-under=80
       - name: Run script smoke tests
         run: |
           # Each script should accept --help cleanly.
@@ -232,6 +232,15 @@ jobs:
       fail_on_severity: critical
       enable_sbom: true
 
+  example-dependency-review-pip:
+    name: Example | dependency-review (Python)
+    uses: ./.github/workflows/reusable-dependency-review.yml
+    with:
+      ecosystem: pip
+      working_directory: examples/python-app
+      snyk_enable: false
+      fail_on_severity: critical
+
   example-osv-scan:
     name: Example | osv-scan (Node.js)
     uses: ./.github/workflows/reusable-osv-scan.yml
@@ -255,6 +264,7 @@ jobs:
       - example-sast-node
       - example-sast-python
       - example-dependency-review-node
+      - example-dependency-review-pip
       - example-container-scan-node
       - example-osv-scan
     if: always()

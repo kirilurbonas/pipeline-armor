@@ -66,3 +66,8 @@ def secrets() -> ModuleType:
 @pytest.fixture(scope="session")
 def osv() -> ModuleType:
     return _load("parse-osv-report.py", "parse_osv_report")
+
+
+@pytest.fixture(scope="session")
+def currency() -> ModuleType:
+    return _load("check-tool-currency.py", "check_tool_currency")
