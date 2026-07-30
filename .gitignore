@@ -81,3 +81,8 @@ secrets.yaml
 
 # ---- Test fixtures are real inputs, never scan output ------------------------
 !tests/fixtures/**
+
+# ---- Coverage artifacts ------------------------------------------------------
+.coverage
+coverage.xml
+htmlcov/
