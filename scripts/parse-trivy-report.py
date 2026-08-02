@@ -21,34 +21,14 @@ import sys
 from pathlib import Path
 from typing import Any
 
-SEVERITY_ORDER = {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "CRITICAL": 3}
-
-
-def md_cell(value: Any) -> str:
-    """Neutralise a value for safe rendering inside a Markdown table cell.
-
-    Trivy surfaces attacker-influenced strings (package names, CVE titles).
-    A stray ``|`` or newline silently corrupts the table, and a backtick
-    breaks the inline-code span we wrap values in — so we escape all three.
-    """
-    return (
-        str(value)
-        .replace("\\", "\\\\")
-        .replace("|", "\\|")
-        .replace("`", "'")
-        .replace("\r", " ")
-        .replace("\n", " ")
-    )
+import common
+from common import SEVERITY_ORDER_UPPER as SEVERITY_ORDER
+from common import md_cell
 
 
 def load_json(path: str) -> Any:
-    p = Path(path)
-    if not p.exists() or p.stat().st_size == 0:
-        return {}
-    try:
-        return json.loads(p.read_text())
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return {}
+    # Trivy call sites iterate the result, so default to {} rather than None.
+    return common.load_json(path, default={})
 
 
 def collect_vulns(report: dict) -> list[dict]:

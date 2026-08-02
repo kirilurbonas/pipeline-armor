@@ -213,10 +213,11 @@ jobs:
       - name: Enforce decision
         env:
           DECISION: ${{ steps.decide.outputs.decision }}
+          ENVIRONMENT: ${{ inputs.environment }}
         run: |
           if [ "$DECISION" != "pass" ]; then
-            echo "::error::Deploy gate FAILED for environment '${{ inputs.environment }}'."
+            echo "::error::Deploy gate FAILED for environment '$ENVIRONMENT'."
             echo "See deploy-gate-summary.md for details. Downstream deploys will not run."
             exit 1
           fi
-          echo "Deploy gate passed for '${{ inputs.environment }}'."
+          echo "Deploy gate passed for '$ENVIRONMENT'."

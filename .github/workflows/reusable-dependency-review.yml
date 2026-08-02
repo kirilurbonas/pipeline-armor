@@ -153,10 +153,11 @@ jobs:
         working-directory: ${{ inputs.working_directory }}
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+          FAIL_ON: ${{ inputs.fail_on_severity }}
         run: |
           set +e
           snyk test \
-            --severity-threshold=${{ inputs.fail_on_severity }} \
+            --severity-threshold="$FAIL_ON" \
             --json-file-output=snyk-deps.json \
             --all-projects
           echo "SNYK_DEPS_EXIT=$?" >> "$GITHUB_ENV"
@@ -261,11 +262,13 @@ jobs:
       - name: Comment on PR
         if: github.event_name == 'pull_request' && hashFiles(format('{0}/dependency-comment.md', inputs.working_directory)) != ''
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9.0.0
+        env:
+          WORKDIR: ${{ inputs.working_directory }}
         with:
           script: |
             const fs = require('fs');
             const path = require('path');
-            const file = path.join('${{ inputs.working_directory }}', 'dependency-comment.md');
+            const file = path.join(process.env.WORKDIR, 'dependency-comment.md');
             const body = fs.readFileSync(file, 'utf8');
             const marker = '<!-- pipeline-armor:deps -->';
             const { data: comments } = await github.rest.issues.listComments({
@@ -305,9 +308,10 @@ jobs:
       - name: Enforce gate
         env:
           BREACHES: ${{ steps.summary.outputs.breaches }}
+          FAIL_ON: ${{ inputs.fail_on_severity }}
         run: |
           if [ "${BREACHES:-0}" -gt 0 ]; then
-            echo "::error::Dependency review gate failed: ${BREACHES} breach(es) at or above '${{ inputs.fail_on_severity }}'."
+            echo "::error::Dependency review gate failed: ${BREACHES} breach(es) at or above '$FAIL_ON'."
             exit 1
           fi
           echo "Dependency review gate passed."

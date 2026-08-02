@@ -25,29 +25,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-SEVERITY_ORDER = {"low": 0, "medium": 1, "high": 2, "critical": 3}
-
-
-def md_cell(value: Any) -> str:
-    """Escape user-controlled values for safe Markdown table rendering."""
-    return (
-        str(value)
-        .replace("\\", "\\\\")
-        .replace("|", "\\|")
-        .replace("`", "'")
-        .replace("\r", " ")
-        .replace("\n", " ")
-    )
-
-
-def load_json(path: str) -> Any | None:
-    p = Path(path)
-    if not p.exists() or p.stat().st_size == 0:
-        return None
-    try:
-        return json.loads(p.read_text())
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return None
+from common import SEVERITY_ORDER, load_json, md_cell
 
 
 def normalize_severity(value: Any) -> str:

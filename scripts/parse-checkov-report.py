@@ -17,11 +17,9 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Any
 
-# Severities Checkov reports range over (string, sometimes None).
-SEVERITY_ORDER = {"low": 0, "medium": 1, "high": 2, "critical": 3}
-
+import common
+from common import SEVERITY_ORDER, md_cell, md_link_url
 
 # A small, opinionated subset — extend as needed.
 COMPLIANCE_MAP: dict[str, list[str]] = {
@@ -42,36 +40,9 @@ COMPLIANCE_MAP: dict[str, list[str]] = {
 }
 
 
-def md_cell(value: Any) -> str:
-    """Neutralise a value for safe rendering inside a Markdown table cell.
-
-    Checkov surfaces user-controlled strings (resource names, file paths,
-    check descriptions). A stray ``|`` or newline silently corrupts the
-    table and a backtick breaks the inline-code span we wrap values in.
-    """
-    return (
-        str(value)
-        .replace("\\", "\\\\")
-        .replace("|", "\\|")
-        .replace("`", "'")
-        .replace("\r", " ")
-        .replace("\n", " ")
-    )
-
-
-def md_link_url(url: str) -> str:
-    """Escape a URL so it can't break out of a Markdown ``[text](url)`` span."""
-    return str(url).replace(" ", "%20").replace("(", "%28").replace(")", "%29")
-
-
 def load_report(path: str) -> list[dict]:
-    p = Path(path)
-    if not p.exists() or p.stat().st_size == 0:
-        return []
-    try:
-        raw = json.loads(p.read_text())
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return []
+    """Normalize Checkov's version-dependent output (dict vs list) to a list."""
+    raw = common.load_json(path, default=[])
     if isinstance(raw, list):
         return raw
     if isinstance(raw, dict):

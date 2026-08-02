@@ -87,16 +87,20 @@ jobs:
 
       - name: Build image
         id: build
+        env:
+          IMAGE_REF: ${{ inputs.image_ref }}
+          BUILD_CONTEXT: ${{ inputs.build_context }}
+          DOCKERFILE_PATH: ${{ inputs.dockerfile_path }}
         run: |
           start=$(date +%s)
           docker buildx build \
             --load \
-            -t "${{ inputs.image_ref }}" \
-            -f "${{ inputs.build_context }}/${{ inputs.dockerfile_path }}" \
-            "${{ inputs.build_context }}"
+            -t "$IMAGE_REF" \
+            -f "$BUILD_CONTEXT/$DOCKERFILE_PATH" \
+            "$BUILD_CONTEXT"
           end=$(date +%s)
           duration=$(( end - start ))
-          size_bytes=$(docker image inspect "${{ inputs.image_ref }}" --format '{{.Size}}')
+          size_bytes=$(docker image inspect "$IMAGE_REF" --format '{{.Size}}')
           # Convert to MB with one decimal place via awk to avoid bashisms.
           size_mb=$(awk -v b="$size_bytes" 'BEGIN { printf "%.1f", b/1024/1024 }')
           echo "duration=$duration" >> "$GITHUB_OUTPUT"
@@ -128,23 +132,31 @@ jobs:
       #    pass — the gate — only happens at the end.
       # -----------------------------------------------------------------------
       - name: Trivy image scan (JSON, full)
+        env:
+          IMAGE_REF: ${{ inputs.image_ref }}
+          SKIP_FILES: ${{ inputs.skip_files }}
+          IGNORE_UNFIXED: ${{ inputs.ignore_unfixed }}
         run: |
+          extra_args=()
+          if [ "$IGNORE_UNFIXED" = "true" ]; then extra_args+=(--ignore-unfixed); fi
+          if [ -n "$SKIP_FILES" ]; then extra_args+=(--skip-files "$SKIP_FILES"); fi
           trivy image \
             --exit-code 0 \
             --format json \
             --output trivy-full.json \
             --scanners vuln,secret,misconfig \
-            ${{ inputs.ignore_unfixed && '--ignore-unfixed' || '' }} \
-            ${{ inputs.skip_files != '' && format('--skip-files {0}', inputs.skip_files) || '' }} \
-            "${{ inputs.image_ref }}"
+            "${extra_args[@]}" \
+            "$IMAGE_REF"
 
       - name: Trivy image scan (SARIF)
+        env:
+          IMAGE_REF: ${{ inputs.image_ref }}
         run: |
           trivy image \
             --exit-code 0 \
             --format sarif \
             --output trivy.sarif \
-            "${{ inputs.image_ref }}"
+            "$IMAGE_REF"
 
       - name: Upload Trivy SARIF
         if: hashFiles('trivy.sarif') != ''
@@ -158,12 +170,15 @@ jobs:
       #    missing HEALTHCHECK, world-writable directories, etc.
       # -----------------------------------------------------------------------
       - name: Trivy Dockerfile config scan
+        env:
+          BUILD_CONTEXT: ${{ inputs.build_context }}
+          DOCKERFILE_PATH: ${{ inputs.dockerfile_path }}
         run: |
           trivy config \
             --exit-code 0 \
             --format json \
             --output trivy-config.json \
-            "${{ inputs.build_context }}/${{ inputs.dockerfile_path }}"
+            "$BUILD_CONTEXT/$DOCKERFILE_PATH"
 
       # -----------------------------------------------------------------------
       # 5. SBOM. We emit CycloneDX format because it's the most broadly
@@ -172,11 +187,13 @@ jobs:
       # -----------------------------------------------------------------------
       - name: Generate CycloneDX SBOM
         if: inputs.enable_sbom
+        env:
+          IMAGE_REF: ${{ inputs.image_ref }}
         run: |
           trivy image \
             --format cyclonedx \
             --output sbom.json \
-            "${{ inputs.image_ref }}"
+            "$IMAGE_REF"
 
       - name: Summarize SBOM
         if: inputs.enable_sbom

@@ -7,12 +7,18 @@ importlib and expose one module-level fixture per script.
 from __future__ import annotations
 
 import importlib.util
+import sys
 from pathlib import Path
 from types import ModuleType
 
 import pytest
 
 SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
+
+# The scripts do `import common` (resolved from their own directory when run
+# as `python3 scripts/<name>.py`); make that work under importlib loading too.
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
 
 
 def _load(filename: str, modname: str) -> ModuleType:

@@ -6,6 +6,26 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+
+- Fix all 16 semgrep `p/github-actions` findings: `${{ inputs.* }}` is no
+  longer interpolated directly into `run:` shell or `github-script` JS in
+  any reusable workflow — every input now flows through step `env:`
+  variables (`"$FAIL_ON"`, `process.env.WORKDIR`, …). Exploitation
+  required a caller passing untrusted event data into an input, but a
+  security library should not ship the pattern its own SAST flags.
+- New lint step runs semgrep `p/github-actions` (same pinned version as
+  the SAST workflow) over `.github/workflows/` on every PR so the
+  injection pattern cannot regress.
+- `check-tool-currency.py` now hard-refuses non-https lookup URLs.
+
+### Changed
+
+- Refactor: new `scripts/common.py` is the single source of truth for the
+  severity tables, Markdown-cell escaping, and the tolerant JSON loader
+  that were previously copied (and already drifting) across six parser
+  scripts. No behavior change; per-call-site defaults preserved.
+
 ## [1.2.0] — 2026-08-02
 
 ### Security

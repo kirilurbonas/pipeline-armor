@@ -104,11 +104,15 @@ def fetch_latest(kind: str, ref: str, token: str | None = None) -> str | None:
         url = f"https://pypi.org/pypi/{ref}/json"
     else:
         return None
+    if not url.startswith("https://"):  # defense in depth for S310
+        return None
     request = urllib.request.Request(url, headers={"Accept": "application/json"})
     if token and kind == "github":
         request.add_header("Authorization", f"Bearer {token}")
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
+        # URL is built from a hardcoded allowlist of hosts and the https://
+        # scheme is enforced above, so file:// et al. are unreachable.
+        with urllib.request.urlopen(request, timeout=30) as response:  # nosemgrep
             data = json.loads(response.read())
     except Exception:  # noqa: BLE001 - any network failure means "unknown"
         return None

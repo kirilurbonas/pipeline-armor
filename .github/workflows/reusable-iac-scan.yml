@@ -91,11 +91,13 @@ jobs:
         env:
           SKIP: ${{ inputs.checkov_skip_checks }}
           EXTERNAL: ${{ inputs.checkov_external_checks }}
+          IAC_DIR: ${{ inputs.iac_directory }}
+          FRAMEWORK: ${{ inputs.framework }}
         run: |
           set +e
           checkov \
-            --directory "${{ inputs.iac_directory }}" \
-            --framework "${{ inputs.framework }}" \
+            --directory "$IAC_DIR" \
+            --framework "$FRAMEWORK" \
             --output json \
             --output-file-path checkov-results.json \
             --soft-fail \
@@ -113,11 +115,13 @@ jobs:
       - name: Run Checkov (SARIF)
         env:
           SKIP: ${{ inputs.checkov_skip_checks }}
+          IAC_DIR: ${{ inputs.iac_directory }}
+          FRAMEWORK: ${{ inputs.framework }}
         run: |
           set +e
           checkov \
-            --directory "${{ inputs.iac_directory }}" \
-            --framework "${{ inputs.framework }}" \
+            --directory "$IAC_DIR" \
+            --framework "$FRAMEWORK" \
             --output sarif \
             --output-file-path checkov.sarif \
             --soft-fail \

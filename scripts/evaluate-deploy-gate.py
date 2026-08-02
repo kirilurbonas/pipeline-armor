@@ -8,8 +8,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-SEVERITY_ORDER = {"low": 0, "medium": 1, "high": 2, "critical": 3}
-SEVERITIES = ("critical", "high", "medium", "low")
+from common import SEVERITIES, SEVERITY_ORDER, load_json, md_cell  # noqa: F401
 
 SCAN_ARTIFACTS = {
     "sast": ("sast-reports", "sast-findings.json"),
@@ -67,26 +66,6 @@ def parse_policy_file(path: Path) -> dict[str, dict[str, set[str]]] | None:
                 policies.setdefault(current_env, {"fail_on": set()})["fail_on"].add(sev)
 
     return policies or None
-
-
-def md_cell(value: Any) -> str:
-    return (
-        str(value)
-        .replace("\\", "\\\\")
-        .replace("|", "\\|")
-        .replace("`", "'")
-        .replace("\r", " ")
-        .replace("\n", " ")
-    )
-
-
-def load_json(path: Path) -> Any | None:
-    if not path.exists() or path.stat().st_size == 0:
-        return None
-    try:
-        return json.loads(path.read_text())
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return None
 
 
 def extract_counts(payload: Any) -> dict[str, int] | None:

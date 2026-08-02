@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-SEVERITY_ORDER = {"low": 0, "medium": 1, "high": 2, "critical": 3}
+from common import SEVERITY_ORDER, load_json
 
 # Snyk uses "error/warning/note"; Semgrep uses "ERROR/WARNING/INFO";
 # SARIF has level. Everything is normalized to low/medium/high/critical.
@@ -29,15 +29,6 @@ SEVERITY_MAP = {
     "medium": "medium",
     "low": "low",
 }
-
-
-def load_json(path: Path) -> Any | None:
-    if not path.exists() or path.stat().st_size == 0:
-        return None
-    try:
-        return json.loads(path.read_text())
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return None
 
 
 def normalize_severity(severity: Any) -> str:

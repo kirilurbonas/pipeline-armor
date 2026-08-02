@@ -143,10 +143,11 @@ jobs:
         working-directory: ${{ inputs.working_directory }}
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+          FAIL_ON: ${{ inputs.fail_on_severity }}
         run: |
           set +e
           snyk code test \
-            --severity-threshold=${{ inputs.fail_on_severity }} \
+            --severity-threshold="$FAIL_ON" \
             --sarif-file-output=snyk-sast.sarif \
             --json-file-output=snyk-sast.json
           # Capture the exit code but do not fail here; we want SARIF uploaded
@@ -214,11 +215,14 @@ jobs:
       - name: Comment on PR
         if: github.event_name == 'pull_request'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9.0.0
+        env:
+          WORKDIR: ${{ inputs.working_directory }}
+          FAIL_ON: ${{ inputs.fail_on_severity }}
         with:
           script: |
             const fs = require('fs');
             const path = require('path');
-            const file = path.join('${{ inputs.working_directory }}', 'sast-findings.json');
+            const file = path.join(process.env.WORKDIR, 'sast-findings.json');
             if (!fs.existsSync(file)) { return; }
             const data = JSON.parse(fs.readFileSync(file, 'utf8'));
             const marker = '<!-- pipeline-armor:sast -->';
@@ -238,7 +242,7 @@ jobs:
               '|---|---|---|---|',
               rows,
               '',
-              '_Fail threshold: `${{ inputs.fail_on_severity }}`._',
+              `_Fail threshold: \`${process.env.FAIL_ON}\`._`,
             ].join('\n');
 
             const { data: comments } = await github.rest.issues.listComments({
@@ -283,10 +287,12 @@ jobs:
       # -----------------------------------------------------------------------
       - name: Enforce severity gate
         working-directory: ${{ inputs.working_directory }}
+        env:
+          FAIL_ON: ${{ inputs.fail_on_severity }}
         run: |
           breaches=$(cat sast-breaches 2>/dev/null || echo 0)
           if [ "$breaches" -gt 0 ]; then
-            echo "::error::SAST gate failed: $breaches finding(s) at or above '${{ inputs.fail_on_severity }}'."
+            echo "::error::SAST gate failed: $breaches finding(s) at or above '$FAIL_ON'."
             echo "See the Security tab and the job summary for details."
             exit 1
           fi

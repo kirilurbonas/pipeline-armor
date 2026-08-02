@@ -55,6 +55,13 @@ jobs:
         uses: raven-actions/actionlint@3d39aea434753780c3b3d4a1a31c854b4dbf49d7  # v2.2.0
         with:
           files: ".github/workflows/*.yml"
+      - name: Workflow SAST (semgrep p/github-actions)
+        run: |
+          # Same semgrep pin as reusable-sast.yml (the Snyk-style consistency
+          # check below guards the Snyk pins; this one is asserted by grep).
+          pin=$(grep -oE 'semgrep==[0-9.]+' .github/workflows/reusable-sast.yml | head -1)
+          pip install --quiet "$pin"
+          semgrep scan --config p/github-actions --error --metrics=off .github/workflows/
       - name: Snyk pin consistency
         run: |
           # SNYK_VERSION/SNYK_SHA256 are pinned in two workflows and must be
