@@ -82,15 +82,20 @@ jobs:
   dependency-review:
     uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-dependency-review.yml@v1
     secrets: { SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }} }
+  osv-scan:
+    uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-osv-scan.yml@v1
+  iac-scan:
+    uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-iac-scan.yml@v1
+    with: { iac_directory: infra/, framework: terraform }
   container-scan:
     needs: [secret-scan]
     uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-container-scan.yml@v1
     with: { image_ref: myapp:${{ github.sha }}, enable_sbom: true }
   deploy-gate:
     if: ${{ always() }}
-    needs: [sast, container-scan, dependency-review, secret-scan]
+    needs: [sast, container-scan, dependency-review, osv-scan, iac-scan, secret-scan]
     uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-deploy-gate.yml@v1
-    with: { environment: staging, required_scans: 'sast,container,secrets,dependencies' }
+    with: { environment: staging, required_scans: 'sast,container,iac,secrets,dependencies,osv' }
 ```
 
 That's it. See [docs/getting-started.md](docs/getting-started.md) for the
@@ -117,6 +122,7 @@ complete, real-world consumer pipeline:
 - [examples/nodejs-app](examples/nodejs-app) — Express service, distroless image.
 - [examples/python-app](examples/python-app) — FastAPI service, slim-bookworm image.
 - [examples/terraform-infra](examples/terraform-infra) — hardened S3 + KMS module.
+- [examples/k8s-manifests](examples/k8s-manifests) — hardened Deployment + Service pair for the kubernetes IaC scan.
 
 ## Architecture
 

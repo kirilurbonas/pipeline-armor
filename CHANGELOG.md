@@ -29,6 +29,26 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `example-dependency-review-pip` self-test job exercising the pip
   license-extraction path against `examples/python-app`, wired into the
   E2E deploy gate.
+- IaC framework matrix in the self-test: `example-iac-scan-dockerfile`
+  (against the Node.js example's Dockerfile) and `example-iac-scan-k8s`
+  against a new hardened `examples/k8s-manifests/` Deployment + Service
+  pair — terraform, dockerfile, and kubernetes are now all exercised in
+  CI (cloudformation remains supported but not self-tested, noted in
+  docs).
+- End-to-end `main()` tests for `parse-trivy-report.py` (65%→99%,
+  covering misconfig tables, SBOM license distribution, and the
+  dual-report misconfig merge) and mocked-network tests for
+  `check-tool-currency.py` (51%→99%); a test documenting the Checkov
+  SARIF-patch fail-open path. Total script coverage now 94%.
+
+### Changed
+
+- The Checkov PR comment now includes the "Compliance frameworks
+  affected" table (top 5), previously visible only in the job summary.
+- Docs truth pass: `configuration.md` pin example references a real tag,
+  `getting-started.md` covers osv-scan, attest-sbom, and the full caller
+  `permissions:` block, and the README quick-start now includes iac-scan
+  and osv-scan wired into the deploy gate.
 
 ### Fixed
 

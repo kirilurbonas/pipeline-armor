@@ -194,6 +194,22 @@ jobs:
       # leave soft_fail off and tighten with checkov_skip_checks.
       soft_fail: true
 
+  example-iac-scan-dockerfile:
+    name: Example | iac-scan (dockerfile)
+    uses: ./.github/workflows/reusable-iac-scan.yml
+    with:
+      iac_directory: examples/nodejs-app
+      framework: dockerfile
+      soft_fail: true
+
+  example-iac-scan-k8s:
+    name: Example | iac-scan (kubernetes)
+    uses: ./.github/workflows/reusable-iac-scan.yml
+    with:
+      iac_directory: examples/k8s-manifests
+      framework: kubernetes
+      soft_fail: true
+
   example-sast-node:
     name: Example | sast (Node.js)
     uses: ./.github/workflows/reusable-sast.yml
@@ -261,6 +277,8 @@ jobs:
     needs:
       - example-secret-scan
       - example-iac-scan
+      - example-iac-scan-dockerfile
+      - example-iac-scan-k8s
       - example-sast-node
       - example-sast-python
       - example-dependency-review-node

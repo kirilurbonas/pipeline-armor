@@ -157,3 +157,41 @@ def test_main_empty_report_writes_zero_counts(checkov, tmp_path, monkeypatch):
     counts = json.loads((out / "counts.json").read_text())
     assert counts["breaches"] == 0
     assert counts["failed"] == 0
+
+
+def test_main_corrupt_sarif_fails_open(checkov, tmp_path, monkeypatch, capsys):
+    import json as _json
+
+    report_path = tmp_path / "report.json"
+    report_path.write_text(_json.dumps(_checkov_report(failed=[("CKV_AWS_24", "high")])))
+    sarif_path = tmp_path / "checkov.sarif"
+    sarif_path.write_text("{not valid json")
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "parse-checkov-report.py",
+            "--report", str(report_path),
+            "--fail-on", "high",
+            "--summary-out", str(tmp_path / "summary.md"),
+            "--comment-out", str(tmp_path / "comment.md"),
+            "--counts-out", str(tmp_path / "counts.json"),
+            "--sarif-in", str(sarif_path),
+        ],
+    )
+    # Fail-open by design: a bad SARIF must not kill the reporting step.
+    assert checkov.main() == 0
+    assert "Failed to patch SARIF" in capsys.readouterr().err
+    assert sarif_path.read_text() == "{not valid json"
+    assert (tmp_path / "counts.json").exists()
+
+
+def test_comment_includes_compliance_table(checkov, tmp_path, monkeypatch):
+    out = _run_main(
+        checkov,
+        tmp_path,
+        monkeypatch,
+        _checkov_report(failed=[("CKV_AWS_24", "high"), ("CKV_AWS_19", "high")]),
+    )
+    comment = (out / "comment.md").read_text()
+    assert "Compliance frameworks affected" in comment
+    assert "CIS-4.1" in comment

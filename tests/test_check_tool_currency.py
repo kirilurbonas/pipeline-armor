@@ -42,3 +42,87 @@ def test_render_report_statuses(currency):
     assert "✅ current" in report
     assert "⚠️ pin not found" in report
     assert "⚠️ lookup failed" in report
+
+
+class _FakeResponse:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def read(self):
+        import json
+
+        return json.dumps(self._payload).encode()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def test_fetch_latest_github_strips_v_prefix(currency, monkeypatch):
+    def fake_urlopen(request, timeout=30):
+        assert "api.github.com/repos/o/r/releases/latest" in request.full_url
+        return _FakeResponse({"tag_name": "v1.2.3"})
+
+    monkeypatch.setattr(currency.urllib.request, "urlopen", fake_urlopen)
+    assert currency.fetch_latest("github", "o/r") == "1.2.3"
+
+
+def test_fetch_latest_github_sends_token(currency, monkeypatch):
+    seen = {}
+
+    def fake_urlopen(request, timeout=30):
+        seen["auth"] = request.get_header("Authorization")
+        return _FakeResponse({"tag_name": "v2.0.0"})
+
+    monkeypatch.setattr(currency.urllib.request, "urlopen", fake_urlopen)
+    assert currency.fetch_latest("github", "o/r", token="tok") == "2.0.0"
+    assert seen["auth"] == "Bearer tok"
+
+
+def test_fetch_latest_pypi(currency, monkeypatch):
+    def fake_urlopen(request, timeout=30):
+        assert "pypi.org/pypi/semgrep/json" in request.full_url
+        return _FakeResponse({"info": {"version": "1.99.0"}})
+
+    monkeypatch.setattr(currency.urllib.request, "urlopen", fake_urlopen)
+    assert currency.fetch_latest("pypi", "semgrep") == "1.99.0"
+
+
+def test_fetch_latest_failure_and_unknown_kind(currency, monkeypatch):
+    def boom(request, timeout=30):
+        raise OSError("network down")
+
+    monkeypatch.setattr(currency.urllib.request, "urlopen", boom)
+    assert currency.fetch_latest("github", "o/r") is None
+    assert currency.fetch_latest("bogus", "x") is None
+
+
+def test_main_end_to_end_with_mocked_fetch(currency, tmp_path, monkeypatch):
+    # Pretend the first tool is stale and the rest are current.
+    stale_tool = currency.TOOLS[0][0]
+
+    def fake_fetch(kind, ref, token=None):
+        for tool, _f, _p, k, r in currency.TOOLS:
+            if (k, r) == (kind, ref):
+                return "999.0.0" if tool == stale_tool else None
+        return None
+
+    monkeypatch.setattr(currency, "fetch_latest", fake_fetch)
+    report = tmp_path / "report.md"
+    outputs = tmp_path / "outputs.txt"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "check-tool-currency.py",
+            "--workflows-dir", ".github/workflows",
+            "--report-out", str(report),
+            "--outputs-out", str(outputs),
+        ],
+    )
+    assert currency.main() == 0
+    assert "stale=1" in outputs.read_text()
+    text = report.read_text()
+    assert "🔴 stale" in text
+    assert "⚠️ lookup failed" in text

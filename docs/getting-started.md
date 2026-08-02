@@ -44,6 +44,24 @@ Open *Settings → Secrets and variables → Actions* in your repo and add:
 - `SNYK_TOKEN` (optional; required if you keep `snyk_enable: true`).
 - `SLACK_WEBHOOK_URL` (optional; required if `notify_slack: true`).
 
+### Caller permissions
+
+The caller workflow's `permissions:` block must grant everything the
+called workflows request. A full pipeline needs:
+
+```yaml
+permissions:
+  contents: read
+  security-events: write   # SARIF uploads
+  pull-requests: write     # PR comments
+  actions: read            # deploy gate reads upstream artifacts
+  deployments: write       # deploy gate's environment binding
+  issues: write            # deploy gate notifications
+  # Only if you chain reusable-attest-sbom.yml:
+  # id-token: write
+  # attestations: write
+```
+
 ## 4. Create environments
 
 Open *Settings → Environments* and create one per deploy target —
@@ -57,9 +75,11 @@ manual-approval-for-prod is enforced — see [security-gates.md](security-gates.
 Open a PR against `main`. You should see, in this order:
 
 1. `secret-scan` runs first and gates everything else.
-2. `sast`, `dependency-review`, and (if applicable) `iac-scan` run in
-   parallel.
-3. `container-scan` runs after `secret-scan` succeeds.
+2. `sast`, `dependency-review`, `osv-scan` (token-free full-tree CVE
+   scan), and (if applicable) `iac-scan` run in parallel.
+3. `container-scan` runs after `secret-scan` succeeds. Optionally chain
+   `reusable-attest-sbom.yml` after it for a signed SBOM attestation
+   (requires `id-token: write` + `attestations: write`).
 4. `deploy-gate` runs last, aggregates the results, and either passes
    (allowing your downstream deploy job to proceed) or fails with a
    detailed report in the job summary. Declare the job with

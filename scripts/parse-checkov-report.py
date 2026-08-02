@@ -208,6 +208,14 @@ def main() -> int:
                 f"| `{md_cell(c['id'])}` | {md_cell(c['severity'])} | "
                 f"`{md_cell(c['resource'])}` |"
             )
+    if framework_hits:
+        c_lines.append("")
+        c_lines.append("**Compliance frameworks affected:**")
+        c_lines.append("")
+        c_lines.append("| Framework | Failing checks |")
+        c_lines.append("|---|---|")
+        for fw, n in sorted(framework_hits.items(), key=lambda kv: -kv[1])[:5]:
+            c_lines.append(f"| {fw} | {n} |")
     comment_md = "\n".join(c_lines) + "\n"
 
     Path(args.summary_out).write_text(summary_md)
@@ -230,7 +238,7 @@ def main() -> int:
                             res for res in run["results"]
                             if not res.get("suppressions")
                         ]
-                    
+
                     rules = run.get("tool", {}).get("driver", {}).get("rules", [])
                     for rule in rules:
                         rule_id = rule.get("id")

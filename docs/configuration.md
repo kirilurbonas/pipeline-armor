@@ -10,7 +10,7 @@ commit SHA so a change in this library can't silently alter your gate
 behavior.
 
 ```yaml
-uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-sast.yml@v1.4.0
+uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-sast.yml@v1.1.0
 # or
 uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-sast.yml@5c2f4ab1...
 ```
@@ -68,7 +68,7 @@ The caller job must set `needs:` on the container-scan job and grant
 | Input | Default | Description |
 | --- | --- | --- |
 | `iac_directory` | `.` | Path to scan. |
-| `framework` | `terraform` | `terraform` &#124; `cloudformation` &#124; `kubernetes` &#124; `dockerfile` &#124; `all` |
+| `framework` | `terraform` | `terraform` &#124; `cloudformation` &#124; `kubernetes` &#124; `dockerfile` &#124; `all`. The terraform, kubernetes, and dockerfile paths are exercised by this repo's self-test; cloudformation is supported (passed straight to Checkov) but not self-tested. |
 | `fail_on_severity` | `high` | Severity gate. |
 | `soft_fail` | `false` | If true, never fails the pipeline. |
 | `checkov_skip_checks` | `""` | Comma-separated check IDs to suppress. |
