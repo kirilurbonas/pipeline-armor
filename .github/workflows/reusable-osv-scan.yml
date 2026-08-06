@@ -47,15 +47,19 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+        with:
+          persist-credentials: false
 
       - name: Checkout workflow helpers
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
         with:
+          persist-credentials: false
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           path: .pipeline-armor
           sparse-checkout: |
             scripts
+            .github/actions
 
       # -----------------------------------------------------------------------
       # 1. Install osv-scanner: single static binary, pinned version, verified
@@ -130,34 +134,10 @@ jobs:
 
       - name: Comment on PR
         if: github.event_name == 'pull_request' && hashFiles(format('{0}/osv-comment.md', inputs.working_directory)) != ''
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9.0.0
-        env:
-          WORKDIR: ${{ inputs.working_directory }}
+        uses: ./.pipeline-armor/.github/actions/upsert-pr-comment
         with:
-          script: |
-            const fs = require('fs');
-            const path = require('path');
-            const file = path.join(process.env.WORKDIR, 'osv-comment.md');
-            const body = fs.readFileSync(file, 'utf8');
-            const marker = '<!-- pipeline-armor:osv -->';
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-            });
-            const existing = comments.find(c => c.body && c.body.includes(marker));
-            const fullBody = marker + '\n' + body;
-            if (existing) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner, repo: context.repo.repo,
-                comment_id: existing.id, body: fullBody,
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner, repo: context.repo.repo,
-                issue_number: context.issue.number, body: fullBody,
-              });
-            }
+          marker: '<!-- pipeline-armor:osv -->'
+          body-file: ${{ inputs.working_directory }}/osv-comment.md
 
       - name: Upload artifacts
         if: always()

@@ -6,6 +6,24 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+
+- Zizmor (second, independent Actions SAST) adopted and all findings
+  fixed: every checkout now sets `persist-credentials: false` (except the
+  release workflow's, which pushes the floating tag and is annotated as
+  intentional), and ci-self-test / gate-negative-e2e drop workflow-level
+  write permissions in favor of least-privilege per-job grants. A pinned
+  `zizmor --offline` step in the lint job keeps it at zero findings.
+
+### Changed
+
+- New `upsert-pr-comment` composite action replaces the six near-identical
+  inline github-script blocks that posted PR comments; reusable workflows
+  reference it via the `.pipeline-armor` self-checkout (sparse-checkout now
+  includes `.github/actions`). The SAST comment body moved from inline JS
+  into `summarize-sast-findings.py --comment-out` (now with Markdown-cell
+  escaping) for parity with the other parsers.
+
 ## [1.2.1] — 2026-08-06
 
 ### Security

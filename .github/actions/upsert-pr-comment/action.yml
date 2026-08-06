@@ -1,0 +1,68 @@
+# =============================================================================
+# pipeline-armor :: upsert-pr-comment (composite action)
+# -----------------------------------------------------------------------------
+# Create or update a single PR comment identified by a hidden HTML marker,
+# so re-runs edit one comment instead of spamming the conversation.
+#
+# This action previously existed as six near-identical inline github-script
+# blocks across the reusable workflows. The reusable workflows reference it
+# through their `.pipeline-armor` self-checkout:
+#
+#   - uses: ./.pipeline-armor/.github/actions/upsert-pr-comment
+#     with:
+#       marker: '<!-- pipeline-armor:osv -->'
+#       body-file: osv-comment.md
+#
+# Requires `pull-requests: write` on the calling job and a pull_request
+# event context. Missing body-file is a silent no-op (scan produced no
+# comment), matching the previous behavior.
+# =============================================================================
+name: upsert-pr-comment
+description: Create or update a single PR comment identified by a hidden marker.
+
+inputs:
+  marker:
+    description: 'Hidden HTML comment that identifies the comment to upsert.'
+    required: true
+  body-file:
+    description: 'Path to a Markdown file with the comment body.'
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Upsert comment
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9.0.0
+      env:
+        MARKER: ${{ inputs.marker }}
+        BODY_FILE: ${{ inputs.body-file }}
+      with:
+        script: |
+          const fs = require('fs');
+          const marker = process.env.MARKER;
+          const file = process.env.BODY_FILE;
+          if (!fs.existsSync(file)) {
+            core.info(`Body file ${file} not found; skipping comment.`);
+            return;
+          }
+          const body = fs.readFileSync(file, 'utf8');
+          const fullBody = body.includes(marker) ? body : marker + '\n' + body;
+          const { data: comments } = await github.rest.issues.listComments({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+          });
+          const existing = comments.find(c => c.body && c.body.includes(marker));
+          if (existing) {
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner, repo: context.repo.repo,
+              comment_id: existing.id, body: fullBody,
+            });
+            core.info(`Updated comment ${existing.id}.`);
+          } else {
+            await github.rest.issues.createComment({
+              owner: context.repo.owner, repo: context.repo.repo,
+              issue_number: context.issue.number, body: fullBody,
+            });
+            core.info('Created new comment.');
+          }

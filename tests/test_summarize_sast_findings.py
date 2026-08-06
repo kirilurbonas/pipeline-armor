@@ -86,6 +86,7 @@ def test_main_end_to_end(sast, tmp_path, monkeypatch):
             "--summary-out", str(summary),
             "--outputs-out", str(outputs),
             "--findings-out", str(findings_out),
+            "--comment-out", str(tmp_path / "sast-comment.md"),
             "--breaches-out", str(breaches_out),
         ],
     )
@@ -108,6 +109,7 @@ def test_main_with_missing_reports_writes_zero_breaches(sast, tmp_path, monkeypa
             "--summary-out", str(tmp_path / "summary.md"),
             "--outputs-out", str(tmp_path / "outputs.txt"),
             "--findings-out", str(tmp_path / "findings.json"),
+            "--comment-out", str(tmp_path / "comment.md"),
             "--breaches-out", str(tmp_path / "breaches"),
         ],
     )

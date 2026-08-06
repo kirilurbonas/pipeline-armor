@@ -77,16 +77,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
         with:
+          persist-credentials: false
           fetch-depth: 0
 
       - name: Checkout workflow helpers
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
         with:
+          persist-credentials: false
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           path: .pipeline-armor
           sparse-checkout: |
             scripts
+            .github/actions
 
       # -----------------------------------------------------------------------
       # 2. Language runtime. We always need Python available because Semgrep
@@ -205,6 +208,7 @@ jobs:
             --summary-out "$GITHUB_STEP_SUMMARY" \
             --outputs-out "$GITHUB_OUTPUT" \
             --findings-out sast-findings.json \
+            --comment-out sast-comment.md \
             --breaches-out sast-breaches
 
       # -----------------------------------------------------------------------
@@ -214,54 +218,10 @@ jobs:
       # -----------------------------------------------------------------------
       - name: Comment on PR
         if: github.event_name == 'pull_request'
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9.0.0
-        env:
-          WORKDIR: ${{ inputs.working_directory }}
-          FAIL_ON: ${{ inputs.fail_on_severity }}
+        uses: ./.pipeline-armor/.github/actions/upsert-pr-comment
         with:
-          script: |
-            const fs = require('fs');
-            const path = require('path');
-            const file = path.join(process.env.WORKDIR, 'sast-findings.json');
-            if (!fs.existsSync(file)) { return; }
-            const data = JSON.parse(fs.readFileSync(file, 'utf8'));
-            const marker = '<!-- pipeline-armor:sast -->';
-            const rows = (data.top || []).map(f =>
-              `| ${f.tool} | ${f.severity} | \`${f.rule}\` | \`${f.location}\` |`
-            ).join('\n') || '_No findings._';
-            const body = [
-              marker,
-              '### SAST scan results',
-              '',
-              `| Critical | High | Medium | Low |`,
-              `|---|---|---|---|`,
-              `| ${data.counts.critical} | ${data.counts.high} | ${data.counts.medium} | ${data.counts.low} |`,
-              '',
-              '#### Top findings',
-              '| Tool | Severity | Rule | Location |',
-              '|---|---|---|---|',
-              rows,
-              '',
-              `_Fail threshold: \`${process.env.FAIL_ON}\`._`,
-            ].join('\n');
-
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-            });
-            const existing = comments.find(c => c.body && c.body.includes(marker));
-            if (existing) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner, repo: context.repo.repo,
-                comment_id: existing.id, body,
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner, repo: context.repo.repo,
-                issue_number: context.issue.number, body,
-              });
-            }
+          marker: '<!-- pipeline-armor:sast -->'
+          body-file: ${{ inputs.working_directory }}/sast-comment.md
 
       # -----------------------------------------------------------------------
       # 7. Artifacts are uploaded even on failure so engineers can download the
@@ -278,6 +238,7 @@ jobs:
             ${{ inputs.working_directory }}/semgrep.sarif
             ${{ inputs.working_directory }}/semgrep.json
             ${{ inputs.working_directory }}/sast-findings.json
+            ${{ inputs.working_directory }}/sast-comment.md
           if-no-files-found: ignore
           retention-days: 30
 

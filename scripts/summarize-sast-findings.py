@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from common import SEVERITY_ORDER, load_json
+from common import SEVERITY_ORDER, load_json, md_cell
 
 # Snyk uses "error/warning/note"; Semgrep uses "ERROR/WARNING/INFO";
 # SARIF has level. Everything is normalized to low/medium/high/critical.
@@ -101,6 +101,36 @@ def render_summary(
     return "\n".join(lines)
 
 
+def render_comment(
+    findings: list[dict[str, Any]], counts: dict[str, int], fail_on: str
+) -> str:
+    """Short PR-comment body (the upsert action prepends the marker)."""
+    lines = [
+        "### SAST scan results",
+        "",
+        "| Critical | High | Medium | Low |",
+        "|---|---|---|---|",
+        f"| {counts['critical']} | {counts['high']} | "
+        f"{counts['medium']} | {counts['low']} |",
+        "",
+        "#### Top findings",
+        "| Tool | Severity | Rule | Location |",
+        "|---|---|---|---|",
+    ]
+    top = rank(findings, 10)
+    if top:
+        for f in top:
+            lines.append(
+                f"| {md_cell(f['tool'])} | {md_cell(f['severity'])} | "
+                f"`{md_cell(f['rule'])}` | `{md_cell(f['location'])}` |"
+            )
+    else:
+        lines.append("_No findings._")
+    lines.append("")
+    lines.append(f"_Fail threshold: `{fail_on}`._")
+    return "\n".join(lines) + "\n"
+
+
 def count_breaches(counts: dict[str, int], fail_on: str) -> int:
     threshold = SEVERITY_ORDER[fail_on]
     return sum(n for sev, n in counts.items() if SEVERITY_ORDER[sev] >= threshold)
@@ -116,6 +146,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--summary-out", required=True, help="Appended to (job summary).")
     parser.add_argument("--outputs-out", required=True, help="Appended to (step outputs).")
     parser.add_argument("--findings-out", required=True)
+    parser.add_argument("--comment-out", required=True)
     parser.add_argument("--breaches-out", required=True)
     return parser
 
@@ -141,6 +172,7 @@ def main() -> int:
     Path(args.findings_out).write_text(
         json.dumps({"counts": counts, "top": rank(findings, 10)})
     )
+    Path(args.comment_out).write_text(render_comment(findings, counts, args.fail_on))
 
     breaches = count_breaches(counts, args.fail_on)
     Path(args.breaches_out).write_text(str(breaches))

@@ -24,15 +24,11 @@ concurrency:
   group: self-test-${{ github.ref }}
   cancel-in-progress: true
 
+# Least privilege by default; each job that calls a reusable workflow grants
+# exactly what that workflow declares (a called workflow cannot exceed the
+# caller job's grants).
 permissions:
   contents: read
-  security-events: write
-  pull-requests: write
-  actions: read
-  # Required by the example-deploy-gate call (reusable-deploy-gate.yml
-  # declares these; a called workflow cannot exceed the caller's grants).
-  deployments: write
-  issues: write
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -44,6 +40,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
         with:
           python-version: '3.11'
@@ -62,6 +60,10 @@ jobs:
           pin=$(grep -oE 'semgrep==[0-9.]+' .github/workflows/reusable-sast.yml | head -1)
           pip install --quiet "$pin"
           semgrep scan --config p/github-actions --error --metrics=off .github/workflows/
+      - name: Workflow SAST (zizmor)
+        run: |
+          pip install --quiet 'zizmor==1.29.0'
+          zizmor --no-progress --offline .github/workflows/ .github/actions/
       - name: Snyk pin consistency
         run: |
           # SNYK_VERSION/SNYK_SHA256 are pinned in two workflows and must be
@@ -85,6 +87,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
         with:
           python-version: '3.11'
@@ -147,6 +151,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
         with:
           python-version: '3.11'
@@ -184,6 +190,9 @@ jobs:
   example-secret-scan:
     name: Example | secret-scan
     uses: ./.github/workflows/reusable-secret-scan.yml
+    permissions:
+      contents: read
+      pull-requests: write
     with:
       scan_depth: all
       # Self-test runs on a clean repo: a real verified secret should never
@@ -193,6 +202,10 @@ jobs:
   example-iac-scan:
     name: Example | iac-scan (terraform)
     uses: ./.github/workflows/reusable-iac-scan.yml
+    permissions:
+      contents: read
+      security-events: write
+      pull-requests: write
     with:
       iac_directory: examples/terraform-infra
       framework: terraform
@@ -204,6 +217,10 @@ jobs:
   example-iac-scan-dockerfile:
     name: Example | iac-scan (dockerfile)
     uses: ./.github/workflows/reusable-iac-scan.yml
+    permissions:
+      contents: read
+      security-events: write
+      pull-requests: write
     with:
       iac_directory: examples/nodejs-app
       framework: dockerfile
@@ -212,6 +229,10 @@ jobs:
   example-iac-scan-k8s:
     name: Example | iac-scan (kubernetes)
     uses: ./.github/workflows/reusable-iac-scan.yml
+    permissions:
+      contents: read
+      security-events: write
+      pull-requests: write
     with:
       iac_directory: examples/k8s-manifests
       framework: kubernetes
@@ -220,6 +241,10 @@ jobs:
   example-sast-node:
     name: Example | sast (Node.js)
     uses: ./.github/workflows/reusable-sast.yml
+    permissions:
+      contents: read
+      security-events: write
+      pull-requests: write
     with:
       language: javascript
       working_directory: examples/nodejs-app
@@ -231,6 +256,10 @@ jobs:
   example-sast-python:
     name: Example | sast (Python)
     uses: ./.github/workflows/reusable-sast.yml
+    permissions:
+      contents: read
+      security-events: write
+      pull-requests: write
     with:
       language: python
       working_directory: examples/python-app
@@ -240,6 +269,10 @@ jobs:
   example-dependency-review-node:
     name: Example | dependency-review (Node.js)
     uses: ./.github/workflows/reusable-dependency-review.yml
+    permissions:
+      contents: read
+      security-events: write
+      pull-requests: write
     with:
       ecosystem: npm
       working_directory: examples/nodejs-app
@@ -249,6 +282,10 @@ jobs:
   example-container-scan-node:
     name: Example | container-scan (Node.js)
     uses: ./.github/workflows/reusable-container-scan.yml
+    permissions:
+      contents: read
+      security-events: write
+      pull-requests: write
     with:
       image_ref: pipeline-armor-node:${{ github.sha }}
       build_context: examples/nodejs-app
@@ -258,6 +295,10 @@ jobs:
   example-dependency-review-pip:
     name: Example | dependency-review (Python)
     uses: ./.github/workflows/reusable-dependency-review.yml
+    permissions:
+      contents: read
+      security-events: write
+      pull-requests: write
     with:
       ecosystem: pip
       working_directory: examples/python-app
@@ -267,6 +308,10 @@ jobs:
   example-osv-scan:
     name: Example | osv-scan (Node.js)
     uses: ./.github/workflows/reusable-osv-scan.yml
+    permissions:
+      contents: read
+      security-events: write
+      pull-requests: write
     with:
       working_directory: examples/nodejs-app
       # The example lockfile legitimately accumulates real CVEs between
@@ -294,6 +339,12 @@ jobs:
       - example-osv-scan
     if: always()
     uses: ./.github/workflows/reusable-deploy-gate.yml
+    permissions:
+      contents: read
+      actions: read
+      deployments: write
+      pull-requests: write
+      issues: write
     with:
       environment: dev
       required_scans: 'sast,container,iac,secrets,dependencies,osv'
