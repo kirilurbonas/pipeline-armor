@@ -1,0 +1,88 @@
+{
+  "_comment": [
+    "pipeline-armor severity ratings for Checkov check IDs.",
+    "Checkov OSS does not emit severities without a Prisma Cloud API key, so",
+    "without this map every finding would be unrated. These are pipeline-armor's",
+    "own ratings (not Prisma's). Checks that are not listed get the workflow's",
+    "`iac_default_severity` (default: high) so unrated findings fail closed.",
+    "Callers can override or extend entries via `checkov_severity_map`."
+  ],
+  "severities": {
+    "CKV_AWS_18": "low",
+    "CKV_AWS_19": "medium",
+    "CKV_AWS_20": "critical",
+    "CKV_AWS_21": "low",
+    "CKV_AWS_23": "low",
+    "CKV_AWS_24": "high",
+    "CKV_AWS_25": "high",
+    "CKV_AWS_40": "medium",
+    "CKV_AWS_45": "high",
+    "CKV_AWS_46": "high",
+    "CKV_AWS_50": "low",
+    "CKV_AWS_144": "low",
+    "CKV_AWS_145": "medium",
+    "CKV_DOCKER_2": "low",
+    "CKV_DOCKER_3": "medium",
+    "CKV_DOCKER_7": "low",
+    "CKV_K8S_8": "low",
+    "CKV_K8S_9": "low",
+    "CKV_K8S_16": "critical",
+    "CKV_K8S_17": "high",
+    "CKV_K8S_19": "high",
+    "CKV_K8S_20": "high",
+    "CKV_K8S_21": "low",
+    "CKV_K8S_23": "medium",
+    "CKV_K8S_28": "medium",
+    "CKV_K8S_37": "medium",
+    "CKV_K8S_40": "medium",
+    "CKV_K8S_43": "low",
+    "CKV2_AWS_5": "low",
+    "CKV2_AWS_6": "high",
+    "CKV2_AWS_61": "low",
+    "CKV2_AWS_62": "low"
+  },
+  "compliance": {
+    "CKV_AWS_18": [
+      "CIS-1.20",
+      "SOC2-CC6.1"
+    ],
+    "CKV_AWS_19": [
+      "CIS-2.1",
+      "PCI-DSS-3.4"
+    ],
+    "CKV_AWS_20": [
+      "CIS-2.1.5"
+    ],
+    "CKV_AWS_21": [
+      "CIS-2.1.2"
+    ],
+    "CKV_AWS_23": [
+      "CIS-4.3"
+    ],
+    "CKV_AWS_24": [
+      "CIS-4.1",
+      "PCI-DSS-1.2"
+    ],
+    "CKV_AWS_25": [
+      "CIS-4.2"
+    ],
+    "CKV_AWS_40": [
+      "CIS-1.16"
+    ],
+    "CKV_AWS_45": [
+      "CIS-1.20"
+    ],
+    "CKV_AWS_46": [
+      "CIS-1.20"
+    ],
+    "CKV_AWS_50": [
+      "SOC2-CC7.2"
+    ],
+    "CKV_K8S_16": [
+      "CIS-K8S-5.2.1"
+    ],
+    "CKV_K8S_20": [
+      "CIS-K8S-5.2.5"
+    ]
+  }
+}

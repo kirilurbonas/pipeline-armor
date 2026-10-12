@@ -81,8 +81,10 @@ Thumbs.db
 secrets.yml
 secrets.yaml
 
-# ---- Test fixtures are real inputs, never scan output ------------------------
+# ---- Test fixtures and policies are real inputs, never scan output ----------
 !tests/fixtures/**
+# policies/checkov-severity.json would otherwise match `checkov-*.json`.
+!policies/**
 
 # ---- Coverage artifacts ------------------------------------------------------
 .coverage
