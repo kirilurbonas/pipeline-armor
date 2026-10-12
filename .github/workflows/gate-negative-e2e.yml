@@ -73,8 +73,6 @@ jobs:
       contents: read
       actions: read
       deployments: write
-      pull-requests: write
-      issues: write
     with:
       environment: prod
       required_scans: 'sast,container,iac,secrets,dependencies'

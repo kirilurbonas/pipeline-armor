@@ -16,21 +16,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from common import SEVERITIES, SEVERITY_ORDER, load_json, md_cell
-
-
-def cvss_to_bucket(score: Any) -> str | None:
-    try:
-        value = float(score)
-    except (TypeError, ValueError):
-        return None
-    if value >= 9.0:
-        return "critical"
-    if value >= 7.0:
-        return "high"
-    if value >= 4.0:
-        return "medium"
-    return "low"
+from common import SEVERITIES, SEVERITY_ORDER, cvss_to_bucket, load_json, md_cell
 
 
 def normalize_severity(vuln: dict[str, Any], group_score: Any) -> str:

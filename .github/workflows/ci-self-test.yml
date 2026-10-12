@@ -162,7 +162,7 @@ jobs:
           if python3 scripts/evaluate-deploy-gate.py \
             --artifacts-dir tests/fixtures/gate-blocking \
             --environment prod \
-            --required-scans sast,container,iac,secrets,dependencies \
+            --required-scans sast,container,iac,secrets,dependencies,osv \
             --run-id gate-negative-test \
             --summary-out /tmp/block-summary.md \
             --report-out /tmp/block-report.json; then
@@ -176,7 +176,7 @@ jobs:
           python3 scripts/evaluate-deploy-gate.py \
             --artifacts-dir tests/fixtures/gate-passing \
             --environment prod \
-            --required-scans sast,container,iac,secrets,dependencies \
+            --required-scans sast,container,iac,secrets,dependencies,osv \
             --run-id gate-positive-test \
             --summary-out /tmp/pass-summary.md \
             --report-out /tmp/pass-report.json
@@ -343,8 +343,6 @@ jobs:
       contents: read
       actions: read
       deployments: write
-      pull-requests: write
-      issues: write
     with:
       environment: dev
       required_scans: 'sast,container,iac,secrets,dependencies,osv'

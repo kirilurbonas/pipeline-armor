@@ -5,7 +5,8 @@
 #
 # This workflow runs two SAST scanners against a caller's source tree:
 #   1. Snyk Code  - commercial scanner, requires SNYK_TOKEN secret.
-#   2. Semgrep    - OSS scanner with the `auto` rule set, no token required.
+#   2. Semgrep    - OSS scanner with pinned registry rulesets for the chosen
+#                   language (override via `semgrep_config`), no token required.
 #
 # Both scanners emit SARIF, which is uploaded to the GitHub code-scanning
 # Security tab. Findings are also summarized as a PR comment and in the
@@ -42,6 +43,13 @@ on:
         description: 'Path within the repository to scan. Defaults to the repository root.'
         type: string
         default: '.'
+      semgrep_config:
+        description: >-
+          Space-separated Semgrep configs (registry packs like p/python, or
+          paths to local rule files). Empty = p/default, p/secrets and the
+          pack for `language`.
+        type: string
+        default: ''
     secrets:
       SNYK_TOKEN:
         description: 'API token for Snyk. Only required when snyk_enable=true.'
@@ -165,22 +173,39 @@ jobs:
           category: snyk-code
 
       # -----------------------------------------------------------------------
-      # 4. Semgrep OSS — always runs, even without a Snyk token. The `auto`
-      #    config selects rule packs based on detected languages.
+      # 4. Semgrep OSS — always runs, even without a Snyk token. We use
+      #    explicit registry packs rather than `--config=auto`: `auto` needs
+      #    metrics enabled and silently errors out with `--metrics=off`.
       # -----------------------------------------------------------------------
       - name: Install Semgrep
         run: pip install --quiet semgrep==1.172.0
 
       - name: Run Semgrep
         working-directory: ${{ inputs.working_directory }}
+        env:
+          LANGUAGE: ${{ inputs.language }}
+          SEMGREP_CONFIG: ${{ inputs.semgrep_config }}
         run: |
           set +e
+          if [ -z "$SEMGREP_CONFIG" ]; then
+            case "$LANGUAGE" in
+              go) lang_pack="p/golang" ;;
+              *)  lang_pack="p/$LANGUAGE" ;;
+            esac
+            SEMGREP_CONFIG="p/default p/secrets $lang_pack"
+          fi
+          config_args=()
+          for cfg in $SEMGREP_CONFIG; do
+            config_args+=("--config=$cfg")
+          done
           semgrep scan \
-            --config=auto \
+            "${config_args[@]}" \
             --sarif-output=semgrep.sarif \
             --json-output=semgrep.json \
             --metrics=off \
             --error
+          # 0 = clean, 1 = findings, anything else = scanner failure. The
+          # summarize step turns a failure into a gate breach.
           echo "SEMGREP_EXIT_CODE=$?" >> "$GITHUB_ENV"
 
       - name: Upload Semgrep SARIF to Security tab
@@ -209,7 +234,9 @@ jobs:
             --outputs-out "$GITHUB_OUTPUT" \
             --findings-out sast-findings.json \
             --comment-out sast-comment.md \
-            --breaches-out sast-breaches
+            --breaches-out sast-breaches \
+            --semgrep-exit "${SEMGREP_EXIT_CODE:-}" \
+            --snyk-exit "${SNYK_EXIT_CODE:-}"
 
       # -----------------------------------------------------------------------
       # 6. PR comment. Skipped on push events. We use actions/github-script to
@@ -253,7 +280,7 @@ jobs:
         run: |
           breaches=$(cat sast-breaches 2>/dev/null || echo 0)
           if [ "$breaches" -gt 0 ]; then
-            echo "::error::SAST gate failed: $breaches finding(s) at or above '$FAIL_ON'."
+            echo "::error::SAST gate failed: $breaches finding(s) at or above '$FAIL_ON' or scanner error(s)."
             echo "See the Security tab and the job summary for details."
             exit 1
           fi

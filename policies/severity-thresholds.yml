@@ -64,9 +64,9 @@ scanners:
 
   secrets:
     fail_on_detection: true
-    # Only VERIFIED secrets fail the build by default — unverified findings
-    # are reported but do not block, on the basis that regex hits without
-    # provider confirmation generate too much alert fatigue.
+    # The secret-scan job fails on VERIFIED secrets by default. In the deploy
+    # gate, verified = critical and unverified (regex hits) = high, so
+    # unverified findings block staging/prod but only warn in dev.
 
   dependencies:
     fail_on_severity: high

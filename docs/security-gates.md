@@ -27,15 +27,22 @@ The bottom three layers can each *fail* a build; only the top layer can
 
 Each scanner ships with its own rule packs:
 
-- **Semgrep** loads the `auto` config, which selects rule packs by
-  detected language.
+- **Semgrep** runs the `p/default` and `p/secrets` registry packs plus the
+  pack for the `language` input (`p/python`, `p/javascript`, `p/java`,
+  `p/golang`). Override with `semgrep_config`. (`--config=auto` is not
+  used: it requires metrics, and errors out under `--metrics=off`.)
 - **Snyk Code** uses the rule set associated with the configured Snyk
   organization.
 - **Trivy** uses the vulnerability database current at scan time.
 - **Checkov** loads its built-in policies (1000+) plus any custom
-  policies supplied via `checkov_external_checks`.
+  policies supplied via `checkov_external_checks`. Checkov OSS does not
+  rate checks, so severities come from
+  [`policies/checkov-severity.json`](../policies/checkov-severity.json)
+  (pipeline-armor's own ratings, overridable via `checkov_severity_map`);
+  unrated checks get `iac_default_severity` (`high`).
 - **Gitleaks** uses its built-in regex set plus any rules in
-  `.gitleaks.toml` at the repo root.
+  `.gitleaks.toml` at the repo root. Gitleaks and Trufflehog both scan
+  committed git history, never the working tree.
 
 These are tuned upstream and are out of scope for pipeline-armor; the
 library only orchestrates the scanners.
@@ -77,27 +84,35 @@ Two non-severity signals are also treated as hard gate breaches:
 - **Dependency policy failures** (for example denied licenses or a
   failing dependency-review diff) are counted as `critical`.
 
-If a required scan artifact is missing or unreadable, the deploy gate
-fails closed instead of assuming success.
+**Fail closed.** The gate fails when a required scan artifact is missing
+or unreadable, and when a scan reports `tool_errors`. A scanner that
+crashed, exited with an unexpected code, or produced no report is never
+read as "0 findings". The SAST, IaC, secrets, and OSV workflows all
+report tool errors.
 
-#### Known limitation: unverified secrets are informational
-
-The secret-scan severity model is deliberately coarse:
+#### Secret severities
 
 - **Verified** findings (Trufflehog confirmed the credential live against
-  the provider) are counted as `critical` and block the gate.
-- **Unverified** findings — which includes *every* Gitleaks finding, since
-  Gitleaks does not verify — are counted as `low` and are informational
-  only.
+  the provider) are `critical`. They block every environment.
+- **Unverified** findings, which includes every Gitleaks finding (Gitleaks
+  does not verify), are `high`. They block `staging` and `prod`, and are a
+  warning in `dev`. Keep accepted false positives in `baseline_file`.
 
-This trades sensitivity for signal: hard-failing on regex hits creates
-alert fatigue. The cost is that a real leaked credential that cannot be
-verified (provider offline, detector without a verifier, revoked-but-
-reused key material) will **not** block a deploy on its own. If your
-threat model requires blocking on any detection, set
-`fail_on_unverified: true` on `reusable-secret-scan.yml` — the job then
-fails on any unverified finding as well (pair it with a curated
-`baseline_file` to keep accepted false positives from blocking).
+The secret-scan job itself fails only on verified secrets unless
+`fail_on_unverified: true` is set. The deploy gate applies the
+environment policy above regardless of that setting.
+
+### What blocks, by default
+
+| Finding | Rated | dev | staging | prod |
+| --- | --- | --- | --- | --- |
+| Verified secret | critical | block | block | block |
+| Unverified secret (regex hit) | high | warn | block | block |
+| Semgrep `error`-level rule | high | warn | block | block |
+| Checkov check in the severity map | as mapped | per rating | per rating | per rating |
+| Checkov check not in the map | `iac_default_severity` (high) | warn | block | block |
+| Denied license / failed dependency review | critical | block | block | block |
+| Any scanner error / missing evidence | n/a | block | block | block |
 
 ## Provenance and attestation
 

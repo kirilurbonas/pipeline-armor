@@ -42,6 +42,23 @@ on:
         description: 'Path to a directory of custom Checkov policies, optional.'
         type: string
         default: ''
+      iac_default_severity:
+        description: >-
+          Severity for Checkov checks with no rating (Checkov OSS rates none;
+          pipeline-armor rates common checks in policies/checkov-severity.json).
+          low|medium|high|critical. Default high, so unrated findings fail closed.
+        type: string
+        default: 'high'
+      sarif_upload:
+        description: 'Upload SARIF results to the GitHub Security tab.'
+        type: boolean
+        default: true
+      checkov_severity_map:
+        description: >-
+          Optional path (in your repo) to a JSON file shaped like
+          policies/checkov-severity.json; its entries override the built-in map.
+        type: string
+        default: ''
 
 concurrency:
   # Include iac_directory + framework so callers can scan multiple stacks in
@@ -74,13 +91,15 @@ jobs:
           path: .pipeline-armor
           sparse-checkout: |
             scripts
+            policies
             .github/actions
 
+      # No `cache: pip` here: setup-python's pip cache errors out in caller
+      # repos with no requirements.txt/pyproject.toml (e.g. pure Terraform).
       - name: Setup Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
         with:
           python-version: '3.11'
-          cache: 'pip'
 
       - name: Install Checkov
         run: |
@@ -88,10 +107,12 @@ jobs:
           checkov --version
 
       # -----------------------------------------------------------------------
-      # 1. JSON output for our own parser. We always pass --soft-fail here so
-      #    Checkov returns 0 even with findings; gating happens later.
+      # 1. One Checkov run, two outputs (JSON for our parser, SARIF for the
+      #    Security tab), so both always see the same checks — including
+      #    external ones. --soft-fail keeps the exit code 0 on findings; any
+      #    other exit code is a scanner failure and fails the gate closed.
       # -----------------------------------------------------------------------
-      - name: Run Checkov (JSON)
+      - name: Run Checkov
         env:
           SKIP: ${{ inputs.checkov_skip_checks }}
           EXTERNAL: ${{ inputs.checkov_external_checks }}
@@ -103,39 +124,17 @@ jobs:
             --directory "$IAC_DIR" \
             --framework "$FRAMEWORK" \
             --output json \
-            --output-file-path checkov-results.json \
+            --output sarif \
+            --output-file-path checkov-out \
             --soft-fail \
             --quiet \
             ${SKIP:+--skip-check "$SKIP"} \
             ${EXTERNAL:+--external-checks-dir "$EXTERNAL"}
-          # Checkov writes to checkov-results.json/results_json.json depending
-          # on version; normalize the path here.
-          if [ -d checkov-results.json ]; then
-            mv checkov-results.json/results_json.json checkov-results.json.tmp
-            rm -rf checkov-results.json
-            mv checkov-results.json.tmp checkov-results.json
-          fi
-
-      - name: Run Checkov (SARIF)
-        env:
-          SKIP: ${{ inputs.checkov_skip_checks }}
-          IAC_DIR: ${{ inputs.iac_directory }}
-          FRAMEWORK: ${{ inputs.framework }}
-        run: |
-          set +e
-          checkov \
-            --directory "$IAC_DIR" \
-            --framework "$FRAMEWORK" \
-            --output sarif \
-            --output-file-path checkov.sarif \
-            --soft-fail \
-            --quiet \
-            ${SKIP:+--skip-check "$SKIP"}
-          if [ -d checkov.sarif ]; then
-            mv checkov.sarif/results_sarif.sarif checkov.sarif.tmp
-            rm -rf checkov.sarif
-            mv checkov.sarif.tmp checkov.sarif
-          fi
+          echo "CHECKOV_EXIT_CODE=$?" >> "$GITHUB_ENV"
+          [ -f checkov-out/results_json.json ] && mv checkov-out/results_json.json checkov-results.json
+          [ -f checkov-out/results_sarif.sarif ] && mv checkov-out/results_sarif.sarif checkov.sarif
+          rm -rf checkov-out
+          exit 0
 
       # -----------------------------------------------------------------------
       # 2. Parse + summarize. The parser script maps Checkov check IDs to
@@ -146,10 +145,15 @@ jobs:
         id: parse
         env:
           FAIL_ON: ${{ inputs.fail_on_severity }}
+          DEFAULT_SEVERITY: ${{ inputs.iac_default_severity }}
+          SEVERITY_MAP: ${{ inputs.checkov_severity_map }}
         run: |
           python3 .pipeline-armor/scripts/parse-checkov-report.py \
             --report checkov-results.json \
             --fail-on "$FAIL_ON" \
+            --default-severity "$DEFAULT_SEVERITY" \
+            --checkov-exit "${CHECKOV_EXIT_CODE:-}" \
+            ${SEVERITY_MAP:+--severity-map "$SEVERITY_MAP"} \
             --summary-out checkov-summary.md \
             --comment-out checkov-comment.md \
             --counts-out checkov-counts.json \
@@ -164,7 +168,7 @@ jobs:
           PY
 
       - name: Upload Checkov SARIF
-        if: hashFiles('checkov.sarif') != ''
+        if: inputs.sarif_upload && hashFiles('checkov.sarif') != ''
         uses: github/codeql-action/upload-sarif@54f647b7e1bb85c95cddabcd46b0c578ec92bc1a  # v4.36.3
         with:
           sarif_file: checkov.sarif
@@ -198,7 +202,7 @@ jobs:
           FAIL_ON: ${{ inputs.fail_on_severity }}
         run: |
           if [ "${BREACHES:-0}" -gt 0 ]; then
-            echo "::error::IaC scan gate failed: $BREACHES finding(s) at or above '$FAIL_ON'."
+            echo "::error::IaC scan gate failed: $BREACHES finding(s) at or above '$FAIL_ON' or scanner error(s)."
             exit 1
           fi
           echo "IaC scan gate passed."

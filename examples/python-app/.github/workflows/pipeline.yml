@@ -26,10 +26,10 @@ permissions:
 
 jobs:
   secret-scan:
-    uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-secret-scan.yml@main
+    uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-secret-scan.yml@v1
 
   sast:
-    uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-sast.yml@main
+    uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-sast.yml@v1
     with:
       language: python
       fail_on_severity: high
@@ -37,24 +37,34 @@ jobs:
       SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
 
   dependency-review:
-    uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-dependency-review.yml@main
+    uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-dependency-review.yml@v1
     with:
       fail_on_severity: high
       ecosystem: pip
     secrets:
       SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
 
+  osv-scan:
+    uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-osv-scan.yml@v1
+
+  iac-scan:
+    uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-iac-scan.yml@v1
+    with:
+      framework: dockerfile
+
   container-scan:
     needs: [secret-scan]
-    uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-container-scan.yml@main
+    uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-container-scan.yml@v1
     with:
       image_ref: myapp:${{ github.sha }}
       enable_sbom: true
       fail_on_severity: HIGH
 
   deploy-gate:
-    needs: [sast, container-scan, dependency-review, secret-scan]
-    uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-deploy-gate.yml@main
+    # always(): the gate must still run (and fail closed) when a scan fails.
+    if: ${{ always() }}
+    needs: [sast, container-scan, dependency-review, osv-scan, iac-scan, secret-scan]
+    uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-deploy-gate.yml@v1
     with:
       environment: staging
-      required_scans: sast,container,secrets,dependencies
+      required_scans: sast,container,secrets,dependencies,osv,iac

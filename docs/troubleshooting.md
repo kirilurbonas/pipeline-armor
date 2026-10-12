@@ -104,12 +104,29 @@ the input is a literal). Three options:
 
 This is expected — test data often looks exactly like real credentials.
 Add the finding to `.gitleaks.baseline.json` (regenerate with
-`gitleaks detect --report-path .gitleaks.baseline.json`) and the
+`gitleaks git . --report-path .gitleaks.baseline.json`) and the
 scanner will skip it going forward.
 
 For per-file suppression, add a `gitleaks:allow` comment on the
 offending line. Document *why* the value is safe in a code comment next
 to the suppression.
+
+## Semgrep reports nothing for my tests/ directory
+
+Semgrep's default `.semgrepignore` skips `tests/`, `test/` and similar
+directories. It also scans only files tracked by git. Add a
+`.semgrepignore` to your repo to change what is skipped.
+
+## IaC scan started failing after upgrading to 1.3
+
+Earlier releases rated every Checkov finding `medium`, so with the default
+`fail_on_severity: high` the IaC gate never blocked. Since 1.3, checks are
+rated from `policies/checkov-severity.json`, and unrated checks default to
+`high`. To adjust:
+
+- Rate specific checks in your own map: `checkov_severity_map: .github/checkov-severity.json`.
+- Lower the default for unrated checks: `iac_default_severity: medium`.
+- Skip checks that don't apply: `checkov_skip_checks: CKV_AWS_144,CKV2_AWS_62`.
 
 ## Container scan takes 8+ minutes
 
@@ -122,10 +139,10 @@ Trivy downloads its CVE database on every cold cache. Two ways to fix:
 
 ## "License check fails on UNKNOWN"
 
-Some npm packages don't declare a license in their `package.json`.
-`license-checker` reports these as `UNKNOWN`. Two options:
+Some packages don't declare a license. These are reported as `UNKNOWN`.
+With an `allow_licenses` list in force, `UNKNOWN` fails the check. Options:
 
-- Treat UNKNOWN as denied: explicitly add it to `deny_licenses`.
+- Accept them deliberately: set `allow_unknown_licenses: true`.
 - Bisect with `npx license-checker --summary` to find the offender,
   then either replace the dependency or add a per-package override in
   `package.json` (`license.overrides`).
@@ -138,7 +155,7 @@ benefit of vulnerability data.
 The first run won't have one. Generate it locally:
 
 ```bash
-gitleaks detect --report-path .gitleaks.baseline.json
+gitleaks git . --report-path .gitleaks.baseline.json
 git add .gitleaks.baseline.json
 git commit -m "chore(security): add gitleaks baseline"
 ```

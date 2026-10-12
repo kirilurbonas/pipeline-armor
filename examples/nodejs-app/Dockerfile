@@ -3,10 +3,9 @@
 #
 # Stage 1 (builder)   : install full dependency tree with dev tooling so we
 #                       can build / test if needed.
-# Stage 2 (runtime)   : copy only production deps + source into a distroless
-#                       image. Final image runs as a non-root user with no
-#                       shell, which neutralizes most container-escape
-#                       chains.
+# Stage 2 (runtime)   : copy only production deps + source into a minimal
+#                       Alpine image with npm removed. The final image runs
+#                       as a non-root user.
 # =============================================================================
 
 # ---- Build ----------------------------------------------------------------

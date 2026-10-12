@@ -6,6 +6,101 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.3.0] — 2026-10-12
+
+Theme: **truthful gates.** Several gates could report "pass" without
+checking anything. Every fix below fails closed, so **upgrading may turn
+previously-green pipelines red**. Each case is a real finding the gate
+used to miss. See "IaC scan started failing after upgrading to 1.3" in
+docs/troubleshooting.md.
+
+### Fixed — gates that silently passed
+
+- **Semgrep never ran.** `--config=auto` errors out under `--metrics=off`,
+  and the exit code was never checked, so SAST without Snyk always reported
+  0 findings. Semgrep now runs the `p/default`, `p/secrets` and
+  per-language registry packs (override with the new `semgrep_config`
+  input). Exit codes other than 0/1 are tool errors that fail the gate.
+- **SAST severities collapsed to `low`.** Semgrep puts the SARIF `level`
+  on the rule (`defaultConfiguration`), not on each result, so every
+  Semgrep finding, injection included, was `low`. Numeric
+  `security-severity` scores ("9.8") also mapped to `low`. Both now
+  resolve correctly: numeric scores use CVSS buckets (shared with OSV via
+  `common.cvss_to_bucket`), with result-then-rule precedence.
+- **IaC findings never blocked.** Checkov OSS emits no severities, so every
+  failure became `medium`, below the default `high` threshold. Checks are
+  now rated from the new `policies/checkov-severity.json` (verified against
+  Checkov 3.3.8's check list; caller overrides via `checkov_severity_map`).
+  Unrated checks get `iac_default_severity` (default `high`). The map also
+  fixes the compliance table's `CKV_K8S_8` entry (a liveness probe check,
+  not privileged containers) and drops the removed `CKV_AWS_52`.
+- **Secret scanning scanned the wrong thing.** Trufflehog ran
+  `filesystem .` (working tree, `.git/` internals and the `.pipeline-armor`
+  checkout) instead of git history. Gitleaks used the deprecated
+  `detect`/`protect` commands, and `protect --staged` is meaningless in CI.
+  Both now scan committed history, over the same commit range. `diff` also
+  works on push events (via `github.event.before`); `staged` is a
+  deprecated alias for `diff`.
+- **Trufflehog Lob false positives** (the "6 verified secrets" on
+  Dependabot PR #28). Lob's detector matches any 40-char `test_…` string,
+  such as pytest function names, and its API then "verifies" them. Lob is
+  now excluded by default via the new `trufflehog_exclude_detectors` input.
+- **Unverified secrets never blocked the deploy gate.** They were rated
+  `low`. They are now `high`: blocking in staging and prod, a warning in
+  dev. Findings both scanners report at the same file:line are merged once
+  (verified wins) instead of counted twice.
+- **License gate largely ineffective.** Matching was exact-string, so
+  `GPL-3.0` missed `GPL-3.0-only`/`-or-later` and every pip trove
+  classifier ("GNU General Public License v3 (GPLv3)"). Licenses are now
+  normalized to SPDX and matched on base id. `OR`/`AND`/`WITH`
+  expressions, npm license arrays and pip `;` joins are understood.
+  `UNKNOWN` now fails an allow-list unless `allow_unknown_licenses: true`.
+- pip license extraction ran in the runner's own Python and counted the
+  tooling as project dependencies. It now uses isolated venvs, and both
+  `pip-licenses` (5.5.5) and `license-checker` (25.0.1) are pinned.
+- IaC: `setup-python`'s `cache: pip` errored in caller repos without
+  Python manifests (e.g. pure Terraform); removed.
+- The IaC summary showed "Passed 0" under `--quiet`; totals now come from
+  Checkov's own summary block.
+
+### Added
+
+- Scanner tool errors (`tool_errors` in the counts JSON) for SAST, IaC and
+  secrets. The deploy gate already failed on them; now they are reported.
+- `scanner-canary.yml`: runs SAST and IaC over deliberately vulnerable code
+  in `canary/` on every PR and weekly, and fails if expected findings stop
+  appearing. A broken scanner can no longer hide behind "0 findings".
+- Real captured scanner outputs as test fixtures
+  (`tests/fixtures/real/`: Semgrep SARIF, Checkov OSS JSON, pip-licenses
+  JSON), alongside the synthetic ones.
+- `secrets.sarif` (combined Gitleaks + Trufflehog, never containing secret
+  values) in the `secret-scan-reports` artifact. Security-tab upload is
+  deferred to v2, because requesting `security-events: write` would break
+  existing callers.
+- Deploy gate `policy_file` input: callers can supply their own policy,
+  including custom environment names. An unreadable caller policy fails
+  closed, and an unknown environment is now a clear error, not a traceback.
+- IaC `sarif_upload` input.
+- OSV gate fixtures; the gate-enforcement job now covers all six scans.
+
+### Changed
+
+- The deploy gate now requests only `contents: read`, `actions: read` and
+  `deployments: write`. It used to also request `pull-requests: write` and
+  `issues: write`, which it never used. The README quick-start didn't grant
+  `issues`, so pipelines copied from it failed at startup. Requesting less
+  is safe for existing callers.
+- Examples pin `@v1` instead of `@main`, declare the gate with
+  `if: ${{ always() }}`, and the app pipelines now include `osv-scan` and a
+  Dockerfile `iac-scan`. The Node example lockfile is bumped past
+  GHSA-jqcg-44mw-7w3h (`proxy-addr` 2.0.8) and two `qs` advisories (6.16.0).
+- Docs truth pass: removed the unbacked SLSA Level 2 badge. Corrected the
+  claims that the Node image is distroless, that secret-scan "gates
+  everything else" (only container-scan depends on it), and that the PR
+  comment carries the gate score (that's in the job summary, artifact and
+  Slack). The architecture diagram now includes OSV. CONTRIBUTING's release
+  steps now match `release.yml`.
+
 ### Security
 
 - Zizmor (second, independent Actions SAST) adopted and all findings
