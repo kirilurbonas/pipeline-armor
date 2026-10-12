@@ -36,15 +36,64 @@ def test_deny_list_violation(licenses):
     assert dist == {"GPL-3.0": 1, "MIT": 1}
 
 
-def test_allow_list_violation_but_unknown_is_exempt(licenses):
+def test_allow_list_violation_and_unknown_fails_closed(licenses):
     pkgs = [
         {"name": "a", "license": "MIT"},
         {"name": "b", "license": "BSD-3-Clause"},
         {"name": "c", "license": "UNKNOWN"},
     ]
     violations, _ = licenses.find_violations(pkgs, {"MIT"}, set())
-    assert [v["name"] for v in violations] == ["b"]
+    assert [v["name"] for v in violations] == ["b", "c"]
     assert violations[0]["reason"] == "not in allow-list"
+    assert violations[1]["reason"].startswith("unknown license")
+    # Opt-in escape hatch.
+    violations, _ = licenses.find_violations(pkgs, {"MIT"}, set(), allow_unknown=True)
+    assert [v["name"] for v in violations] == ["b"]
+
+
+def test_unknown_passes_deny_only_policy(licenses):
+    violations, _ = licenses.find_violations(
+        [{"name": "c", "license": "UNKNOWN"}], set(), {"GPL-3.0"}
+    )
+    assert violations == []
+
+
+def test_deny_matches_spdx_variants(licenses):
+    deny = licenses.parse_spdx_list("GPL-3.0,AGPL-3.0")
+    pkgs = [
+        {"name": "only", "license": "GPL-3.0-only"},
+        {"name": "later", "license": "GPL-3.0-or-later"},
+        {"name": "plus", "license": "AGPL-3.0+"},
+        {"name": "lgpl", "license": "LGPL-3.0-only"},
+    ]
+    violations, _ = licenses.find_violations(pkgs, set(), deny)
+    assert [v["name"] for v in violations] == ["only", "later", "plus"]
+
+
+def test_deny_matches_pip_classifiers(licenses):
+    # pip-licenses reports trove classifier names, not SPDX ids.
+    pkgs = licenses.load_packages(
+        [
+            {"Name": "gpl", "Version": "1", "License": "GNU General Public License v3 (GPLv3)"},
+            {"Name": "mit", "Version": "1", "License": "MIT License"},
+        ],
+        "pip",
+    )
+    violations, dist = licenses.find_violations(pkgs, set(), {"GPL-3.0"})
+    assert [v["name"] for v in violations] == ["gpl==1"]
+    assert dist == {"GPL-3.0-only": 1, "MIT": 1}
+
+
+def test_or_expression_passes_if_any_alternative_ok(licenses):
+    pkgs = [
+        {"name": "dual", "license": "(MIT OR GPL-3.0)"},
+        {"name": "arr", "license": ["GPL-3.0", "Apache-2.0"]},
+        {"name": "both", "license": "MIT AND GPL-3.0"},
+    ]
+    violations, _ = licenses.find_violations(pkgs, set(), {"GPL-3.0"})
+    assert [v["name"] for v in violations] == ["both"]
+    violations, _ = licenses.find_violations(pkgs, {"MIT"}, {"GPL-3.0"})
+    assert [v["name"] for v in violations] == ["arr", "both"]
 
 
 def test_load_packages_go_shape(licenses):
@@ -115,3 +164,19 @@ def test_main_end_to_end_npm(licenses, tmp_path, monkeypatch):
     text = summary.read_text()
     assert "License compliance" in text
     assert "`a@1.0.0`" in text
+
+
+def test_real_pip_licenses_output_against_allow_list(licenses):
+    # Captured from pip-licenses 5.5.5 --from=mixed for examples/python-app:
+    # a mix of SPDX ids, trove classifiers, "A OR B" and "A; B" joins.
+    import json
+    from pathlib import Path
+
+    data = json.loads(
+        (Path(__file__).parent / "fixtures/real/pip-licenses/python-app.json").read_text()
+    )
+    pkgs = licenses.load_packages(data, "pip")
+    allow = licenses.parse_spdx_list("MIT,BSD-3-Clause,Apache-2.0,PSF-2.0")
+    violations, dist = licenses.find_violations(pkgs, allow, set())
+    assert violations == []
+    assert "MIT License" not in dist  # classifiers normalized to SPDX

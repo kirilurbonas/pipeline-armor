@@ -29,6 +29,8 @@ trivy-summary.md
 trivy-comment.md
 checkov-summary.md
 checkov-comment.md
+# Locally-downloaded workflow artifact directories
+*-reports/
 
 # ---- Python -----------------------------------------------------------------
 __pycache__/

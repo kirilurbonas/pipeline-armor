@@ -22,7 +22,9 @@ on:
   workflow_call:
     inputs:
       environment:
-        description: 'Target environment: dev|staging|prod'
+        description: >-
+          Target environment. dev|staging|prod with the built-in policy, or any
+          environment defined in your `policy_file`.
         type: string
         required: true
       required_scans:
@@ -39,6 +41,13 @@ on:
         default: false
       artifact_run_id:
         description: 'Workflow run ID whose scan artifacts should be evaluated. Defaults to the current run.'
+        type: string
+        default: ''
+      policy_file:
+        description: >-
+          Optional path (in your repo) to a policy file shaped like
+          policies/severity-thresholds.yml. Its `environments` replace the
+          built-in ones. If set but unreadable, the gate fails closed.
         type: string
         default: ''
     secrets:
@@ -116,13 +125,19 @@ jobs:
           ENVIRONMENT: ${{ inputs.environment }}
           REQUIRED_SCANS: ${{ inputs.required_scans }}
           RUN_ID: ${{ inputs.artifact_run_id || github.run_id }}
+          CALLER_POLICY: ${{ inputs.policy_file }}
         run: |
+          if [ -n "$CALLER_POLICY" ]; then
+            policy_args=(--policy-file "$CALLER_POLICY" --policy-required)
+          else
+            policy_args=(--policy-file .pipeline-armor/policies/severity-thresholds.yml)
+          fi
           python3 .pipeline-armor/scripts/evaluate-deploy-gate.py \
             --artifacts-dir scan-artifacts \
             --environment "$ENVIRONMENT" \
             --required-scans "$REQUIRED_SCANS" \
             --run-id "$RUN_ID" \
-            --policy-file .pipeline-armor/policies/severity-thresholds.yml \
+            "${policy_args[@]}" \
             --summary-out deploy-gate-summary.md \
             --report-out deploy-gate-report.json
           cat deploy-gate-summary.md >> "$GITHUB_STEP_SUMMARY"

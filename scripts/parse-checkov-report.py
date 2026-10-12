@@ -6,10 +6,12 @@ object, newer versions return a list of objects (one per framework). This
 script normalizes both, applies a severity tally compatible with the deploy
 gate, and emits the same artifacts as parse-trivy-report.py.
 
-A small static map of Checkov ``check_id`` -> compliance frameworks is used
-to render the "frameworks affected" table; the map is not exhaustive, but
-covers the most common AWS controls. The mapping intentionally lives in this
-file so the workflow remains self-contained.
+Checkov OSS emits no severities without a Prisma Cloud API key. Severities
+therefore come from (in order): the check itself when Checkov does supply one,
+``policies/checkov-severity.json`` (pipeline-armor's ratings, optionally
+overlaid by a caller map), and finally ``--default-severity`` (``high``) so
+unrated findings fail closed instead of slipping under the gate. The same
+policy file carries a small check -> compliance-framework map.
 """
 from __future__ import annotations
 
@@ -21,23 +23,24 @@ from pathlib import Path
 import common
 from common import SEVERITY_ORDER, md_cell, md_link_url
 
-# A small, opinionated subset — extend as needed.
-COMPLIANCE_MAP: dict[str, list[str]] = {
-    "CKV_AWS_18": ["CIS-1.20", "SOC2-CC6.1"],   # S3 bucket logging
-    "CKV_AWS_19": ["CIS-2.1", "PCI-DSS-3.4"],   # S3 SSE
-    "CKV_AWS_20": ["CIS-2.1.5"],                # S3 public read
-    "CKV_AWS_21": ["CIS-2.1.2"],                # S3 versioning
-    "CKV_AWS_23": ["CIS-4.3"],                  # SG descriptions
-    "CKV_AWS_24": ["CIS-4.1", "PCI-DSS-1.2"],   # SG ingress 0.0.0.0/0 SSH
-    "CKV_AWS_25": ["CIS-4.2"],                  # SG ingress 0.0.0.0/0 RDP
-    "CKV_AWS_40": ["CIS-1.16"],                 # IAM policies on users
-    "CKV_AWS_45": ["CIS-1.20"],                 # Lambda env secrets
-    "CKV_AWS_46": ["CIS-1.20"],                 # ECS env secrets
-    "CKV_AWS_50": ["SOC2-CC7.2"],               # Lambda tracing
-    "CKV_AWS_52": ["CIS-2.1.2"],                # S3 MFA delete
-    "CKV_K8S_8":  ["CIS-K8S-5.1.5"],            # Privileged containers
-    "CKV_K8S_20": ["CIS-K8S-5.2.5"],            # allowPrivilegeEscalation
-}
+DEFAULT_POLICY = Path(__file__).resolve().parent.parent / "policies" / "checkov-severity.json"
+
+
+def load_policy(paths: list[str]) -> tuple[dict[str, str], dict[str, list[str]]]:
+    """Merge severity + compliance maps; later files override earlier ones."""
+    severities: dict[str, str] = {}
+    compliance: dict[str, list[str]] = {}
+    for path in paths:
+        data = common.load_json(path, default={})
+        if not isinstance(data, dict):
+            continue
+        for check_id, sev in (data.get("severities") or {}).items():
+            if str(sev).lower() in SEVERITY_ORDER:
+                severities[check_id] = str(sev).lower()
+        for check_id, frameworks in (data.get("compliance") or {}).items():
+            if isinstance(frameworks, list):
+                compliance[check_id] = [str(f) for f in frameworks]
+    return severities, compliance
 
 
 def load_report(path: str) -> list[dict]:
@@ -50,17 +53,20 @@ def load_report(path: str) -> list[dict]:
     return []
 
 
-def normalize_severity(check: dict) -> str:
+def normalize_severity(
+    check: dict, severity_map: dict[str, str] | None = None, default: str = "high"
+) -> str:
     # Checkov sets severity in different places depending on version: top
-    # level, or under ``check_result``, or absent. We default to "medium" so
-    # un-rated checks don't silently slip below the gate threshold.
+    # level, or under ``check_result``, or absent (always absent in OSS
+    # without an API key).
     sev = check.get("severity") or (
         check.get("check_result", {}) or {}
     ).get("severity")
-    if not sev:
-        return "medium"
-    sev = str(sev).lower()
-    return sev if sev in SEVERITY_ORDER else "medium"
+    sev = str(sev).lower() if sev else ""
+    if sev in SEVERITY_ORDER:
+        return sev
+    mapped = (severity_map or {}).get(check.get("check_id", ""))
+    return mapped or default
 
 
 def main() -> int:
@@ -71,7 +77,38 @@ def main() -> int:
     p.add_argument("--comment-out", required=True)
     p.add_argument("--counts-out", required=True)
     p.add_argument("--sarif-in", required=False, help="Path to SARIF file to patch with severities")
+    p.add_argument(
+        "--default-severity",
+        default="high",
+        type=str.lower,
+        choices=sorted(SEVERITY_ORDER),
+        help="Severity for checks with no rating from Checkov or the policy map.",
+    )
+    p.add_argument(
+        "--severity-map",
+        action="append",
+        default=[],
+        help="Extra checkov-severity.json-style file(s) overlaid on the built-in map.",
+    )
+    p.add_argument(
+        "--checkov-exit",
+        default=None,
+        help="Checkov exit code. Non-zero (Checkov runs with --soft-fail) or a "
+        "missing report with a zero exit marks a tool error.",
+    )
     args = p.parse_args()
+
+    severity_map, compliance_map = load_policy([str(DEFAULT_POLICY), *args.severity_map])
+
+    def rate(check: dict) -> str:
+        return normalize_severity(check, severity_map, args.default_severity)
+
+    tool_errors: list[str] = []
+    if args.checkov_exit not in (None, ""):
+        if args.checkov_exit != "0":
+            tool_errors.append(f"checkov exited with code {args.checkov_exit}")
+        elif not Path(args.report).exists():
+            tool_errors.append("checkov produced no JSON report")
 
     blocks = load_report(args.report)
     passed = failed = skipped = 0
@@ -83,13 +120,13 @@ def main() -> int:
         results = (block.get("results") or {})
         for check in results.get("passed_checks", []) or []:
             passed += 1
-            check_severities[check.get("check_id")] = normalize_severity(check)
+            check_severities[check.get("check_id")] = rate(check)
         for check in results.get("skipped_checks", []) or []:
             skipped += 1
-            check_severities[check.get("check_id")] = normalize_severity(check)
+            check_severities[check.get("check_id")] = rate(check)
         for check in results.get("failed_checks", []) or []:
             failed += 1
-            sev = normalize_severity(check)
+            sev = rate(check)
             check_id = check.get("check_id", "?")
             check_severities[check_id] = sev
             file_path = check.get("file_path", "?")
@@ -105,8 +142,18 @@ def main() -> int:
                     "guideline": check.get("guideline", ""),
                 }
             )
-            for fw in COMPLIANCE_MAP.get(check_id, []):
+            for fw in compliance_map.get(check_id, []):
                 framework_hits[fw] = framework_hits.get(fw, 0) + 1
+
+    # With --quiet, Checkov omits passed_checks from the per-check lists;
+    # its own ``summary`` block still has the true totals.
+    summaries = [b.get("summary") for b in blocks if isinstance(b.get("summary"), dict)]
+    if summaries:
+        def total_of(key: str) -> int:
+            return sum(int(x.get(key, 0) or 0) for x in summaries)
+
+        passed = max(passed, total_of("passed"))
+        skipped = max(skipped, total_of("skipped"))
 
     total = passed + failed + skipped
     def pct(n: int) -> str:
@@ -120,7 +167,7 @@ def main() -> int:
     threshold = SEVERITY_ORDER.get(fail_on, SEVERITY_ORDER["high"])
     breaches = sum(
         n for s, n in counts.items() if SEVERITY_ORDER[s] >= threshold
-    )
+    ) + len(tool_errors)
 
     # ---- Job summary -------------------------------------------------------
     s = []
@@ -129,6 +176,9 @@ def main() -> int:
     s.append(f"- **Failed:** {failed} ({pct(failed)})")
     s.append(f"- **Skipped:** {skipped} ({pct(skipped)})")
     s.append(f"- **Fail threshold:** `{fail_on}` and above ({breaches} breaching)")
+    s.append(f"- **Unrated checks default to:** `{args.default_severity}`")
+    for err in tool_errors:
+        s.append(f"- **Scanner error (gate fails closed):** {md_cell(err)}")
     s.append("")
     if failed_checks:
         s.append("### Failed checks\n")
@@ -161,6 +211,8 @@ def main() -> int:
         f"Passed {passed} · Failed {failed} · Skipped {skipped} · "
         f"Threshold `{fail_on}`"
     )
+    for err in tool_errors:
+        c_lines.append(f"\n**Scanner error (gate fails closed):** {md_cell(err)}")
     c_lines.append("")
     c_lines.append("| Critical | High | Medium | Low |")
     c_lines.append("|---|---|---|---|")
@@ -193,7 +245,8 @@ def main() -> int:
     Path(args.comment_out).write_text(comment_md)
     Path(args.counts_out).write_text(
         json.dumps({**counts, "breaches": breaches,
-                    "passed": passed, "failed": failed, "skipped": skipped},
+                    "passed": passed, "failed": failed, "skipped": skipped,
+                    "tool_errors": len(tool_errors)},
                    indent=2)
     )
 
@@ -213,7 +266,9 @@ def main() -> int:
                     rules = run.get("tool", {}).get("driver", {}).get("rules", [])
                     for rule in rules:
                         rule_id = rule.get("id")
-                        sev = check_severities.get(rule_id, "medium")
+                        sev = check_severities.get(
+                            rule_id, severity_map.get(rule_id, args.default_severity)
+                        )
                         sev_map = {"critical": "9.0", "high": "7.0", "medium": "5.0", "low": "2.0"}
                         score = sev_map.get(sev, "5.0")
                         if "properties" not in rule:

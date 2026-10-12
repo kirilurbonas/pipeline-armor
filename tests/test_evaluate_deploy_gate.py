@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
-ALL_SCANS = ["sast", "container", "iac", "secrets", "dependencies"]
+ALL_SCANS = ["sast", "container", "iac", "secrets", "dependencies", "osv"]
 
 
 def _write_json(root: Path, relative: str, payload: dict) -> None:
@@ -166,3 +166,52 @@ def test_main_writes_summary_and_report(deploy_gate, tmp_path, monkeypatch):
     data = json.loads(report_path.read_text())
     assert data["decision"] == "pass"
     assert "Deploy Gate" in summary.read_text()
+
+
+def _gate_argv(tmp_path, *extra):
+    return [
+        "evaluate-deploy-gate.py",
+        "--artifacts-dir", str(tmp_path / "artifacts"),
+        "--environment", "qa",
+        "--required-scans", "sast",
+        "--run-id", "1",
+        "--summary-out", str(tmp_path / "s.md"),
+        "--report-out", str(tmp_path / "r.json"),
+        *extra,
+    ]
+
+
+def test_custom_environment_from_caller_policy(deploy_gate, tmp_path, monkeypatch):
+    import json
+
+    policy = tmp_path / "policy.yml"
+    policy.write_text("environments:\n  qa:\n    fail_on:\n      - critical\n")
+    sast = tmp_path / "artifacts" / "sast-reports"
+    sast.mkdir(parents=True)
+    (sast / "sast-findings.json").write_text(
+        json.dumps({"counts": {"critical": 0, "high": 3, "medium": 0, "low": 0}})
+    )
+    monkeypatch.setattr(
+        "sys.argv", _gate_argv(tmp_path, "--policy-file", str(policy), "--policy-required")
+    )
+    assert deploy_gate.main() == 0
+    report = json.loads((tmp_path / "r.json").read_text())
+    assert report["environment"] == "qa"
+    assert report["decision"] == "pass"
+
+
+def test_required_policy_unreadable_fails_closed(deploy_gate, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(
+        "sys.argv",
+        _gate_argv(tmp_path, "--policy-file", str(tmp_path / "nope.yml"), "--policy-required"),
+    )
+    assert deploy_gate.main() == 2
+    assert "Refusing to fall back" in capsys.readouterr().out
+
+
+def test_unknown_environment_is_clear_error(deploy_gate, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr("sys.argv", _gate_argv(tmp_path))
+    assert deploy_gate.main() == 2
+    out = capsys.readouterr().out
+    assert "Unsupported environment: qa" in out
+    assert "dev, prod, staging" in out

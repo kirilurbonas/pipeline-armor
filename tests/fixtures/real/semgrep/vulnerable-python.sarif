@@ -1,0 +1,425 @@
+{
+ "version": "2.1.0",
+ "runs": [
+  {
+   "results": [
+    {
+     "fingerprints": {
+      "matchBasedId/v1": "requires login"
+     },
+     "locations": [
+      {
+       "physicalLocation": {
+        "artifactLocation": {
+         "uri": "app.py",
+         "uriBaseId": "%SRCROOT%"
+        },
+        "region": {
+         "endColumn": 51,
+         "endLine": 6,
+         "snippet": {
+          "text": "    subprocess.call(request.args[\"c\"], shell=True)"
+         },
+         "startColumn": 5,
+         "startLine": 6
+        }
+       }
+      }
+     ],
+     "message": {
+      "text": "Detected user input entering a `subprocess` call unsafely. This could result in a command injection vulnerability. An attacker could use this vulnerability to execute arbitrary commands on the host, which allows them to download malware, scan sensitive data, or run any command they wish on the server. Do not let users choose the command to run. In general, prefer to use Python API versions of system commands. If you must use subprocess, use a dictionary to allowlist a set of commands."
+     },
+     "properties": {},
+     "ruleId": "python.flask.security.injection.subprocess-injection.subprocess-injection"
+    },
+    {
+     "fingerprints": {
+      "matchBasedId/v1": "requires login"
+     },
+     "locations": [
+      {
+       "physicalLocation": {
+        "artifactLocation": {
+         "uri": "app.py",
+         "uriBaseId": "%SRCROOT%"
+        },
+        "region": {
+         "endColumn": 38,
+         "endLine": 6,
+         "snippet": {
+          "text": "    subprocess.call(request.args[\"c\"], shell=True)"
+         },
+         "startColumn": 21,
+         "startLine": 6
+        }
+       }
+      }
+     ],
+     "message": {
+      "text": "Detected subprocess function 'call' with user controlled data. A malicious actor could leverage this to perform command injection. You may consider using 'shlex.escape()'."
+     },
+     "properties": {},
+     "ruleId": "python.lang.security.dangerous-subprocess-use.dangerous-subprocess-use"
+    },
+    {
+     "fingerprints": {
+      "matchBasedId/v1": "requires login"
+     },
+     "locations": [
+      {
+       "physicalLocation": {
+        "artifactLocation": {
+         "uri": "app.py",
+         "uriBaseId": "%SRCROOT%"
+        },
+        "region": {
+         "endColumn": 50,
+         "endLine": 6,
+         "snippet": {
+          "text": "    subprocess.call(request.args[\"c\"], shell=True)"
+         },
+         "startColumn": 46,
+         "startLine": 6
+        }
+       }
+      }
+     ],
+     "message": {
+      "text": "Found 'subprocess' function 'call' with 'shell=True'. This is dangerous because this call will spawn the command using a shell process. Doing so propagates current shell settings and variables, which makes it much easier for a malicious actor to execute commands. Use 'shell=False' instead."
+     },
+     "properties": {},
+     "ruleId": "python.lang.security.audit.subprocess-shell-true.subprocess-shell-true"
+    },
+    {
+     "fingerprints": {
+      "matchBasedId/v1": "requires login"
+     },
+     "locations": [
+      {
+       "physicalLocation": {
+        "artifactLocation": {
+         "uri": "app.py",
+         "uriBaseId": "%SRCROOT%"
+        },
+        "region": {
+         "endColumn": 96,
+         "endLine": 7,
+         "snippet": {
+          "text": "    conn = sqlite3.connect(\"a\"); conn.execute(\"SELECT * FROM t WHERE id=\" + request.args[\"id\"])"
+         },
+         "startColumn": 34,
+         "startLine": 7
+        }
+       }
+      }
+     ],
+     "message": {
+      "text": "Avoiding SQL string concatenation: untrusted input concatenated with raw SQL query can result in SQL Injection. In order to execute raw query safely, prepared statement should be used. SQLAlchemy provides TextualSQL to easily used prepared statement with named parameters. For complex SQL composition, use SQL Expression Language or Schema Definition Language. In most cases, SQLAlchemy ORM will be a better option."
+     },
+     "properties": {},
+     "ruleId": "python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query"
+    },
+    {
+     "fingerprints": {
+      "matchBasedId/v1": "requires login"
+     },
+     "locations": [
+      {
+       "physicalLocation": {
+        "artifactLocation": {
+         "uri": "app.py",
+         "uriBaseId": "%SRCROOT%"
+        },
+        "region": {
+         "endColumn": 95,
+         "endLine": 7,
+         "snippet": {
+          "text": "    conn = sqlite3.connect(\"a\"); conn.execute(\"SELECT * FROM t WHERE id=\" + request.args[\"id\"])"
+         },
+         "startColumn": 47,
+         "startLine": 7
+        }
+       }
+      }
+     ],
+     "message": {
+      "text": "Detected user input used to manually construct a SQL string. This is usually bad practice because manual construction could accidentally result in a SQL injection. An attacker could use a SQL injection to steal or modify contents of the database. Instead, use a parameterized query which is available by default in most database engines. Alternatively, consider using the Django object-relational mappers (ORM) instead of raw SQL queries."
+     },
+     "properties": {},
+     "ruleId": "python.django.security.injection.tainted-sql-string.tainted-sql-string"
+    },
+    {
+     "fingerprints": {
+      "matchBasedId/v1": "requires login"
+     },
+     "locations": [
+      {
+       "physicalLocation": {
+        "artifactLocation": {
+         "uri": "app.py",
+         "uriBaseId": "%SRCROOT%"
+        },
+        "region": {
+         "endColumn": 95,
+         "endLine": 7,
+         "snippet": {
+          "text": "    conn = sqlite3.connect(\"a\"); conn.execute(\"SELECT * FROM t WHERE id=\" + request.args[\"id\"])"
+         },
+         "startColumn": 47,
+         "startLine": 7
+        }
+       }
+      }
+     ],
+     "message": {
+      "text": "Detected user input used to manually construct a SQL string. This is usually bad practice because manual construction could accidentally result in a SQL injection. An attacker could use a SQL injection to steal or modify contents of the database. Instead, use a parameterized query which is available by default in most database engines. Alternatively, consider using an object-relational mapper (ORM) such as SQLAlchemy which will protect your queries."
+     },
+     "properties": {},
+     "ruleId": "python.flask.security.injection.tainted-sql-string.tainted-sql-string"
+    },
+    {
+     "fingerprints": {
+      "matchBasedId/v1": "requires login"
+     },
+     "locations": [
+      {
+       "physicalLocation": {
+        "artifactLocation": {
+         "uri": "app.py",
+         "uriBaseId": "%SRCROOT%"
+        },
+        "region": {
+         "endColumn": 38,
+         "endLine": 8,
+         "snippet": {
+          "text": "    return pickle.loads(request.data)"
+         },
+         "startColumn": 12,
+         "startLine": 8
+        }
+       }
+      }
+     ],
+     "message": {
+      "text": "Detected the use of an insecure deserialization library in a Flask route. These libraries are prone to code execution vulnerabilities. Ensure user data does not enter this function. To fix this, try to avoid serializing whole objects. Consider instead using a serializer such as JSON."
+     },
+     "properties": {},
+     "ruleId": "python.flask.security.insecure-deserialization.insecure-deserialization"
+    },
+    {
+     "fingerprints": {
+      "matchBasedId/v1": "requires login"
+     },
+     "locations": [
+      {
+       "physicalLocation": {
+        "artifactLocation": {
+         "uri": "app.py",
+         "uriBaseId": "%SRCROOT%"
+        },
+        "region": {
+         "endColumn": 38,
+         "endLine": 8,
+         "snippet": {
+          "text": "    return pickle.loads(request.data)"
+         },
+         "startColumn": 12,
+         "startLine": 8
+        }
+       }
+      }
+     ],
+     "message": {
+      "text": "Avoid using `pickle`, which is known to lead to code execution vulnerabilities. When unpickling, the serialized data could be manipulated to run arbitrary code. Instead, consider serializing the relevant data as JSON or a similar text-based serialization format."
+     },
+     "properties": {},
+     "ruleId": "python.lang.security.deserialization.pickle.avoid-pickle"
+    }
+   ],
+   "tool": {
+    "driver": {
+     "name": "Semgrep OSS",
+     "rules": [
+      {
+       "defaultConfiguration": {
+        "level": "error"
+       },
+       "helpUri": "https://semgrep.dev/r/python.django.security.injection.tainted-sql-string.tainted-sql-string",
+       "id": "python.django.security.injection.tainted-sql-string.tainted-sql-string",
+       "name": "python.django.security.injection.tainted-sql-string.tainted-sql-string",
+       "properties": {
+        "precision": "very-high",
+        "tags": [
+         "CWE-915: Improperly Controlled Modification of Dynamically-Determined Object Attributes",
+         "LOW CONFIDENCE",
+         "OWASP-A08:2021 - Software and Data Integrity Failures",
+         "OWASP-A08:2025 - Software or Data Integrity Failures",
+         "security"
+        ]
+       },
+       "shortDescription": {
+        "text": "Semgrep Finding: python.django.security.injection.tainted-sql-string.tainted-sql-string"
+       }
+      },
+      {
+       "defaultConfiguration": {
+        "level": "error"
+       },
+       "helpUri": "https://semgrep.dev/r/python.flask.security.injection.subprocess-injection.subprocess-injection",
+       "id": "python.flask.security.injection.subprocess-injection.subprocess-injection",
+       "name": "python.flask.security.injection.subprocess-injection.subprocess-injection",
+       "properties": {
+        "precision": "very-high",
+        "tags": [
+         "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')",
+         "HIGH CONFIDENCE",
+         "OWASP-A01:2017 - Injection",
+         "OWASP-A03:2021 - Injection",
+         "OWASP-A05:2025 - Injection",
+         "security"
+        ]
+       },
+       "shortDescription": {
+        "text": "Semgrep Finding: python.flask.security.injection.subprocess-injection.subprocess-injection"
+       }
+      },
+      {
+       "defaultConfiguration": {
+        "level": "error"
+       },
+       "helpUri": "https://semgrep.dev/r/python.flask.security.injection.tainted-sql-string.tainted-sql-string",
+       "id": "python.flask.security.injection.tainted-sql-string.tainted-sql-string",
+       "name": "python.flask.security.injection.tainted-sql-string.tainted-sql-string",
+       "properties": {
+        "precision": "very-high",
+        "tags": [
+         "CWE-704: Incorrect Type Conversion or Cast",
+         "MEDIUM CONFIDENCE",
+         "OWASP-A01:2017 - Injection",
+         "OWASP-A03:2021 - Injection",
+         "OWASP-A05:2025 - Injection",
+         "security"
+        ]
+       },
+       "shortDescription": {
+        "text": "Semgrep Finding: python.flask.security.injection.tainted-sql-string.tainted-sql-string"
+       }
+      },
+      {
+       "defaultConfiguration": {
+        "level": "error"
+       },
+       "helpUri": "https://semgrep.dev/r/python.flask.security.insecure-deserialization.insecure-deserialization",
+       "id": "python.flask.security.insecure-deserialization.insecure-deserialization",
+       "name": "python.flask.security.insecure-deserialization.insecure-deserialization",
+       "properties": {
+        "precision": "very-high",
+        "tags": [
+         "CWE-502: Deserialization of Untrusted Data",
+         "LOW CONFIDENCE",
+         "OWASP-A08:2017 - Insecure Deserialization",
+         "OWASP-A08:2021 - Software and Data Integrity Failures",
+         "OWASP-A08:2025 - Software or Data Integrity Failures",
+         "security"
+        ]
+       },
+       "shortDescription": {
+        "text": "Semgrep Finding: python.flask.security.insecure-deserialization.insecure-deserialization"
+       }
+      },
+      {
+       "defaultConfiguration": {
+        "level": "error"
+       },
+       "helpUri": "https://semgrep.dev/r/python.lang.security.audit.subprocess-shell-true.subprocess-shell-true",
+       "id": "python.lang.security.audit.subprocess-shell-true.subprocess-shell-true",
+       "name": "python.lang.security.audit.subprocess-shell-true.subprocess-shell-true",
+       "properties": {
+        "precision": "very-high",
+        "tags": [
+         "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')",
+         "MEDIUM CONFIDENCE",
+         "OWASP-A01:2017 - Injection",
+         "OWASP-A03:2021 - Injection",
+         "OWASP-A05:2025 - Injection",
+         "security"
+        ]
+       },
+       "shortDescription": {
+        "text": "Semgrep Finding: python.lang.security.audit.subprocess-shell-true.subprocess-shell-true"
+       }
+      },
+      {
+       "defaultConfiguration": {
+        "level": "error"
+       },
+       "helpUri": "https://semgrep.dev/r/python.lang.security.dangerous-subprocess-use.dangerous-subprocess-use",
+       "id": "python.lang.security.dangerous-subprocess-use.dangerous-subprocess-use",
+       "name": "python.lang.security.dangerous-subprocess-use.dangerous-subprocess-use",
+       "properties": {
+        "precision": "very-high",
+        "tags": [
+         "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')",
+         "MEDIUM CONFIDENCE",
+         "OWASP-A01:2017 - Injection",
+         "OWASP-A03:2021 - Injection",
+         "OWASP-A05:2025 - Injection",
+         "security"
+        ]
+       },
+       "shortDescription": {
+        "text": "Semgrep Finding: python.lang.security.dangerous-subprocess-use.dangerous-subprocess-use"
+       }
+      },
+      {
+       "defaultConfiguration": {
+        "level": "warning"
+       },
+       "helpUri": "https://semgrep.dev/r/python.lang.security.deserialization.pickle.avoid-pickle",
+       "id": "python.lang.security.deserialization.pickle.avoid-pickle",
+       "name": "python.lang.security.deserialization.pickle.avoid-pickle",
+       "properties": {
+        "precision": "very-high",
+        "tags": [
+         "CWE-502: Deserialization of Untrusted Data",
+         "LOW CONFIDENCE",
+         "OWASP-A08:2017 - Insecure Deserialization",
+         "OWASP-A08:2021 - Software and Data Integrity Failures",
+         "OWASP-A08:2025 - Software or Data Integrity Failures",
+         "security"
+        ]
+       },
+       "shortDescription": {
+        "text": "Semgrep Finding: python.lang.security.deserialization.pickle.avoid-pickle"
+       }
+      },
+      {
+       "defaultConfiguration": {
+        "level": "error"
+       },
+       "helpUri": "https://semgrep.dev/r/python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query",
+       "id": "python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query",
+       "name": "python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query",
+       "properties": {
+        "precision": "very-high",
+        "tags": [
+         "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')",
+         "LOW CONFIDENCE",
+         "OWASP-A01:2017 - Injection",
+         "OWASP-A03:2021 - Injection",
+         "OWASP-A05:2025 - Injection",
+         "security"
+        ]
+       },
+       "shortDescription": {
+        "text": "Semgrep Finding: python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query"
+       }
+      }
+     ],
+     "semanticVersion": "1.172.0"
+    }
+   }
+  }
+ ],
+ "$schema": "https://docs.oasis-open.org/sarif/sarif/v2.1.0/os/schemas/sarif-schema-2.1.0.json"
+}

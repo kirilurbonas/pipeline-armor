@@ -73,16 +73,23 @@ The caller job must set `needs:` on the container-scan job and grant
 | `soft_fail` | `false` | If true, never fails the pipeline. |
 | `checkov_skip_checks` | `""` | Comma-separated check IDs to suppress. |
 | `checkov_external_checks` | `""` | Path to a directory of custom Checkov policies. |
+| `iac_default_severity` | `high` | Severity for checks with no rating (Checkov OSS rates none). |
+| `checkov_severity_map` | `""` | Path in your repo to a JSON file shaped like [`policies/checkov-severity.json`](../policies/checkov-severity.json); overrides built-in ratings. |
+| `sarif_upload` | `true` | Upload SARIF to the Security tab. |
 
 ## reusable-secret-scan.yml
 
 | Input | Default | Description |
 | --- | --- | --- |
-| `scan_depth` | `all` | `staged` &#124; `all` &#124; `diff` |
-| `fail_on_detection` | `true` | Fail when verified secrets are found. |
-| `fail_on_unverified` | `false` | Also fail on unverified findings (e.g. Gitleaks regex hits). Off by default to limit alert fatigue; see [security-gates.md](security-gates.md). |
+| `scan_depth` | `all` | `all` (full git history) &#124; `diff` (since `base_ref`, or since the previous push). `staged` is a deprecated alias for `diff`. |
+| `fail_on_detection` | `true` | Fail when verified secrets are found, or a scanner errors. |
+| `fail_on_unverified` | `false` | Also fail this job on unverified findings (e.g. Gitleaks regex hits). The deploy gate rates them `high` either way; see [security-gates.md](security-gates.md). |
 | `baseline_file` | `.gitleaks.baseline.json` | Accepted-findings baseline. |
 | `base_ref` | `""` | Base ref for `diff` scans. |
+| `trufflehog_exclude_detectors` | `Lob` | Trufflehog detectors to skip. Lob's pattern matches 40-char `test_…` identifiers (e.g. pytest names) and "verifies" them; set `''` to re-enable. |
+
+Both scanners read committed history only. The combined findings are also
+written as `secrets.sarif` in the `secret-scan-reports` artifact.
 
 ## reusable-dependency-review.yml
 
@@ -91,9 +98,18 @@ The caller job must set `needs:` on the container-scan job and grant
 | `fail_on_severity` | `high` | Severity gate. |
 | `allow_licenses` | `""` | Comma-separated allowed SPDX IDs. Empty = allow anything not denied. |
 | `deny_licenses` | `GPL-3.0,AGPL-3.0,SSPL-1.0` | Comma-separated denied SPDX IDs. |
+| `allow_unknown_licenses` | `false` | With an allow-list, accept `UNKNOWN` licenses (otherwise they fail). |
 | `snyk_enable` | `true` | Run Snyk Open Source. |
 | `ecosystem` | `auto` | `auto` &#124; `npm` &#124; `pip` &#124; `maven` &#124; `go` |
 | `working_directory` | `.` | Subdirectory to review, useful for monorepos and example apps. |
+
+Licenses are normalized to SPDX, including pip trove classifiers such as
+"GNU General Public License v3 (GPLv3)". They are matched by base id, so
+`GPL-3.0` also covers `GPL-3.0-only`, `GPL-3.0-or-later` and `GPL-3.0+`.
+Expressions are understood: a package passes if any `OR` alternative is
+acceptable, and every `AND` term must be. npm license arrays and pip's
+`A; B` joins count as `OR`. pip licenses are read from an isolated venv,
+so the scanner's own tooling is never counted.
 
 License extraction supports **npm, pip, and go**. For `maven` (and any
 other ecosystem) the license gate reports `unsupported` in the job summary
@@ -121,7 +137,8 @@ Register it in the deploy gate with the `osv` scan id
 
 | Input | Default | Description |
 | --- | --- | --- |
-| `environment` | _required_ | `dev` &#124; `staging` &#124; `prod` |
+| `environment` | _required_ | `dev` &#124; `staging` &#124; `prod`, or any environment defined in `policy_file`. |
+| `policy_file` | `""` | Path in your repo to a policy shaped like [`policies/severity-thresholds.yml`](../policies/severity-thresholds.yml). Its `environments` replace the built-ins. If unreadable, the gate fails closed. |
 | `required_scans` | `sast,container,iac,secrets` | Scans that must have produced artifacts (`sast`, `container`, `iac`, `secrets`, `dependencies`, `osv`). Match these to the caller job's `needs:` list and run the gate job with `if: ${{ always() }}`. |
 | `bypass_approvers` | `""` | Informational; actual approval enforced via Environments. |
 | `notify_slack` | `false` | Post status to Slack. |

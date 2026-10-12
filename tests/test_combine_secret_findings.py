@@ -61,7 +61,8 @@ def test_verified_split_and_counts(secrets):
     summary = secrets.build_summary_json(deduped)
     assert summary["verified"] == 1
     assert summary["unverified"] == 1
-    assert summary["counts"] == {"critical": 1, "high": 0, "medium": 0, "low": 1}
+    # Unverified regex hits are high: blocking in staging/prod, warning in dev.
+    assert summary["counts"] == {"critical": 1, "high": 1, "medium": 0, "low": 0}
     assert summary["breaches"] == 1
 
 
@@ -83,10 +84,11 @@ def test_secret_values_never_appear_in_outputs(secrets, tmp_path, monkeypatch):
             "--summary-json-out", str(json_out),
             "--summary-md-out", str(md_out),
             "--outputs-out", str(outputs),
+            "--sarif-out", str(tmp_path / "secrets.sarif"),
         ],
     )
     assert secrets.main() == 0
-    for path in (json_out, md_out, outputs):
+    for path in (json_out, md_out, outputs, tmp_path / "secrets.sarif"):
         assert SECRET_VALUE not in path.read_text()
     assert "verified=1" in outputs.read_text()
 
@@ -106,3 +108,68 @@ def test_main_no_findings(secrets, tmp_path, monkeypatch):
     assert secrets.main() == 0
     assert "_No secrets detected._" in (tmp_path / "s.md").read_text()
     assert json.loads((tmp_path / "s.json").read_text())["breaches"] == 0
+
+
+def _trufflehog_git_finding(file: str, line: int, verified: bool = True) -> dict:
+    return {
+        "DetectorName": "Github",
+        "Verified": verified,
+        "Raw": SECRET_VALUE,
+        "SourceMetadata": {
+            "Data": {"Git": {"file": file, "line": line, "commit": "abc123"}}
+        },
+    }
+
+
+def test_trufflehog_git_mode_metadata(secrets):
+    findings = secrets.normalize_trufflehog([_trufflehog_git_finding("src/x.py", 4)])
+    assert findings[0]["file"] == "src/x.py"
+    assert findings[0]["line"] == 4
+
+
+def test_dedupe_across_scanners_prefers_verified(secrets):
+    # Same secret found by both tools: one finding, and it keeps the
+    # verified status rather than double-counting.
+    findings = secrets.normalize_gitleaks([_gitleaks_finding()]) + secrets.normalize_trufflehog(
+        [_trufflehog_finding(verified=True)]
+    )
+    deduped = secrets.dedupe(findings)
+    assert len(deduped) == 1
+    assert deduped[0]["verified"] is True
+
+
+def test_tool_errors(secrets):
+    assert secrets.tool_errors({"gitleaks": "1", "trufflehog": "0"}) == []
+    assert secrets.tool_errors({"gitleaks": None, "trufflehog": ""}) == []
+    assert secrets.tool_errors({"gitleaks": "126", "trufflehog": "1"}) == [
+        "gitleaks: exited with code 126",
+        "trufflehog: exited with code 1",
+    ]
+
+
+def test_scanner_crash_reported_as_tool_error(secrets, tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "combine-secret-findings.py",
+            "--gitleaks-report", str(tmp_path / "gl.json"),
+            "--trufflehog-report", str(tmp_path / "th.json"),
+            "--summary-json-out", str(tmp_path / "s.json"),
+            "--summary-md-out", str(tmp_path / "s.md"),
+            "--outputs-out", str(tmp_path / "out.txt"),
+            "--trufflehog-exit", "2",
+        ],
+    )
+    assert secrets.main() == 0
+    assert json.loads((tmp_path / "s.json").read_text())["tool_errors"] == 1
+    assert "tool_errors=1" in (tmp_path / "out.txt").read_text()
+    assert "Scanner error" in (tmp_path / "s.md").read_text()
+
+
+def test_sarif_shape(secrets):
+    deduped = secrets.normalize_trufflehog([_trufflehog_git_finding("a.py", 0)])
+    sarif = secrets.build_sarif(deduped)
+    result = sarif["runs"][0]["results"][0]
+    assert result["properties"]["security-severity"] == "9.5"
+    # SARIF requires startLine >= 1.
+    assert result["locations"][0]["physicalLocation"]["region"]["startLine"] == 1

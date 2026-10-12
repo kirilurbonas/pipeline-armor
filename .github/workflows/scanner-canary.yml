@@ -1,0 +1,110 @@
+# =============================================================================
+# pipeline-armor :: scanner-canary.yml
+# -----------------------------------------------------------------------------
+# Proves the scanners still *find* things.
+#
+# A security gate that reports "0 findings, pass" looks identical whether the
+# code is clean or the scanner never ran. That is exactly how Semgrep sat
+# silently broken (`--config=auto` + `--metrics=off`) behind green CI. This
+# workflow runs the reusable scans over deliberately vulnerable code in
+# canary/ and asserts minimum finding counts, so a scanner that stops
+# working — a bad flag, an upstream rule-pack change, a parser regression —
+# turns this workflow red.
+#
+# It is a separate workflow (not a job in ci-self-test) so its artifacts live
+# in their own run and never reach the example deploy gate. It runs weekly as
+# well, because upstream rule packs change without any commit here.
+# =============================================================================
+name: scanner-canary
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: scanner-canary-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # The scans themselves use thresholds/soft_fail so they always complete;
+  # the assertions live in the `assert` job below.
+  canary-sast:
+    name: Canary | sast (Python)
+    uses: ./.github/workflows/reusable-sast.yml
+    permissions:
+      contents: read
+      security-events: write
+      pull-requests: write
+    with:
+      language: python
+      working_directory: canary/python
+      snyk_enable: false
+      sarif_upload: false
+      fail_on_severity: critical
+
+  canary-iac:
+    name: Canary | iac-scan (terraform)
+    uses: ./.github/workflows/reusable-iac-scan.yml
+    permissions:
+      contents: read
+      security-events: write
+      pull-requests: write
+    with:
+      iac_directory: canary/terraform
+      framework: terraform
+      sarif_upload: false
+      soft_fail: true
+
+  assert:
+    name: Canary | scanners found the planted issues
+    needs: [canary-sast, canary-iac]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download canary artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          path: canary-artifacts
+
+      - name: Assert minimum findings
+        run: |
+          python3 - <<'PY'
+          import json, sys
+          from pathlib import Path
+
+          root = Path("canary-artifacts")
+          # (artifact file, severity, minimum). Minimums sit well below what
+          # the canaries currently produce (sast: 7 high; iac: 1 critical,
+          # 2 high) so rule-pack churn doesn't flap, but zero always fails.
+          expectations = [
+              ("sast-reports/sast-findings.json", "high", 3),
+              ("iac-scan-reports/checkov-counts.json", "critical", 1),
+              ("iac-scan-reports/checkov-counts.json", "high", 1),
+          ]
+          failed = False
+          for rel, sev, minimum in expectations:
+              path = root / rel
+              if not path.exists():
+                  print(f"::error::{rel} missing; the scan did not produce evidence.")
+                  failed = True
+                  continue
+              data = json.loads(path.read_text())
+              counts = data.get("counts", data)
+              got = int(counts.get(sev, 0))
+              errors = int(data.get("tool_errors", 0))
+              status = "ok" if got >= minimum and not errors else "FAIL"
+              print(f"{status}: {rel} {sev}={got} (min {minimum}), tool_errors={errors}")
+              if status == "FAIL":
+                  print(f"::error::{rel}: expected >= {minimum} {sev}, got {got} "
+                        f"(tool_errors={errors}). A scanner has stopped finding things.")
+                  failed = True
+          sys.exit(1 if failed else 0)
+          PY

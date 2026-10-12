@@ -289,6 +289,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional severity-thresholds.yml; overrides built-in environment "
         "policies when readable, falls back to built-ins otherwise.",
     )
+    parser.add_argument(
+        "--policy-required",
+        action="store_true",
+        help="Fail (exit 2) instead of falling back when --policy-file is unreadable. "
+        "Used for caller-supplied policies, where a silent fallback would loosen policy.",
+    )
     return parser
 
 
@@ -303,19 +309,30 @@ def main() -> int:
         env_policies = parse_policy_file(Path(args.policy_file))
         if env_policies is not None:
             policy_source = args.policy_file
+        elif args.policy_required:
+            print(
+                f"::error::Could not read any environment policies from "
+                f"{args.policy_file}. Refusing to fall back to built-in defaults."
+            )
+            return 2
         else:
             print(
                 f"Warning: could not read environment policies from "
                 f"{args.policy_file}; using built-in defaults."
             )
 
-    report = evaluate(
-        required_scans,
-        Path(args.artifacts_dir),
-        args.environment,
-        args.run_id,
-        env_policies=env_policies,
-    )
+    try:
+        report = evaluate(
+            required_scans,
+            Path(args.artifacts_dir),
+            args.environment,
+            args.run_id,
+            env_policies=env_policies,
+        )
+    except ValueError as exc:
+        known = ", ".join(sorted(env_policies or ENV_POLICIES))
+        print(f"::error::{exc}. Environments defined by the policy: {known}.")
+        return 2
     report["policy"]["source"] = policy_source
     Path(args.report_out).write_text(json.dumps(report, indent=2))
     Path(args.summary_out).write_text(render_summary(report))

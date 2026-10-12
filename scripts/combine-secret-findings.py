@@ -3,8 +3,10 @@
 
 Per policy, the secret value itself is NEVER emitted — only the rule that
 fired, file:line, and scanner metadata. Verified findings (confirmed live by
-Trufflehog against the provider) count as critical deploy-gate breaches;
-unverified findings remain informational.
+Trufflehog against the provider) count as critical; unverified findings
+(regex hits) count as high, so the deploy gate blocks them in staging/prod
+while dev only warns. Scanner failures are reported as ``tool_errors`` so a
+crashed scanner can never look like a clean scan.
 """
 from __future__ import annotations
 
@@ -13,6 +15,12 @@ import json
 import sys
 from pathlib import Path
 from typing import Any
+
+from common import md_cell
+
+# Gitleaks exits 1 when it finds leaks; Trufflehog exits 0 unless it crashes
+# (we don't pass --fail). Anything else means the scan did not complete.
+OK_EXIT_CODES = {"gitleaks": {0, 1}, "trufflehog": {0}}
 
 
 def load_report(path: Path) -> list[dict[str, Any]]:
@@ -52,7 +60,9 @@ def normalize_trufflehog(findings: list[dict[str, Any]]) -> list[dict[str, Any]]
         if not isinstance(f, dict):
             continue
         src = (f.get("SourceMetadata", {}) or {}).get("Data", {}) or {}
-        fs = src.get("Filesystem", {}) or {}
+        # `trufflehog git` reports under Data.Git; `filesystem` under
+        # Data.Filesystem. Accept either.
+        fs = src.get("Git") or src.get("Filesystem") or {}
         normalized.append(
             {
                 "source": "trufflehog",
@@ -67,32 +77,112 @@ def normalize_trufflehog(findings: list[dict[str, Any]]) -> list[dict[str, Any]]
 
 
 def dedupe(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    seen: set[tuple[Any, Any, Any]] = set()
-    deduped = []
+    """Collapse findings at the same file:line, across scanners.
+
+    Gitleaks and Trufflehog name rules differently, so keying on the rule
+    double-counted every secret both tools found. A verified finding wins
+    over an unverified one at the same location.
+    """
+    by_location: dict[tuple[Any, Any], dict[str, Any]] = {}
     for f in findings:
-        key = (f["file"], f["line"], f["rule"])
-        if key in seen:
+        key = (f["file"], f["line"])
+        current = by_location.get(key)
+        if current is None or (f["verified"] and not current["verified"]):
+            by_location[key] = f
+    return list(by_location.values())
+
+
+def tool_errors(exit_codes: dict[str, str | None]) -> list[str]:
+    errors = []
+    for tool, code in exit_codes.items():
+        if code is None or code == "":
             continue
-        seen.add(key)
-        deduped.append(f)
-    return deduped
+        try:
+            value = int(code)
+        except ValueError:
+            errors.append(f"{tool}: unparseable exit code {code!r}")
+            continue
+        if value not in OK_EXIT_CODES[tool]:
+            errors.append(f"{tool}: exited with code {value}")
+    return errors
 
 
-def build_summary_json(deduped: list[dict[str, Any]]) -> dict[str, Any]:
+def build_summary_json(
+    deduped: list[dict[str, Any]], errors: list[str] | None = None
+) -> dict[str, Any]:
     verified = [f for f in deduped if f["verified"]]
     unverified = [f for f in deduped if not f["verified"]]
+    errors = errors or []
     return {
         "total": len(deduped),
         "verified": len(verified),
         "unverified": len(unverified),
         "counts": {
             "critical": len(verified),
-            "high": 0,
+            "high": len(unverified),
             "medium": 0,
-            "low": len(unverified),
+            "low": 0,
         },
         "breaches": len(verified),
+        "tool_errors": len(errors),
+        "errors": errors,
         "findings": deduped,
+    }
+
+
+def build_sarif(deduped: list[dict[str, Any]]) -> dict[str, Any]:
+    """SARIF for the Security tab. Carries rule + location only — never the
+    secret value."""
+    rules: dict[str, dict[str, Any]] = {}
+    results = []
+    for f in deduped:
+        rule_id = f"{f['source']}/{f['rule']}"
+        rules.setdefault(
+            rule_id,
+            {
+                "id": rule_id,
+                "name": str(f["rule"]),
+                "shortDescription": {"text": f"Secret detected: {f['secret_type']}"},
+                "properties": {"tags": ["security", "secret"]},
+            },
+        )
+        line = f["line"] if isinstance(f["line"], int) and f["line"] > 0 else 1
+        results.append(
+            {
+                "ruleId": rule_id,
+                "level": "error",
+                "message": {
+                    "text": (
+                        f"{'Verified live' if f['verified'] else 'Possible'} "
+                        f"{f['secret_type']} secret. Rotate it and remove it from history."
+                    )
+                },
+                "properties": {"security-severity": "9.5" if f["verified"] else "7.5"},
+                "locations": [
+                    {
+                        "physicalLocation": {
+                            "artifactLocation": {"uri": str(f["file"])},
+                            "region": {"startLine": line},
+                        }
+                    }
+                ],
+            }
+        )
+    return {
+        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+        "version": "2.1.0",
+        "runs": [
+            {
+                "tool": {
+                    "driver": {
+                        "name": "pipeline-armor-secrets",
+                        "informationUri": "https://github.com/kirilurbonas/pipeline-armor",
+                        "rules": list(rules.values()),
+                    }
+                },
+                "results": results,
+            }
+        ],
     }
 
 
@@ -103,9 +193,11 @@ def render_markdown(summary: dict[str, Any], baseline_file: str) -> str:
     lines.append(f"- **Verified (live):** {summary['verified']}")
     lines.append(f"- **Unverified:** {summary['unverified']}")
     lines.append(
-        "- **Gate behavior:** verified findings are counted as critical "
-        "deploy-gate breaches; unverified findings remain informational."
+        "- **Gate behavior:** verified findings count as critical; unverified "
+        "findings count as high (the deploy gate blocks them in staging/prod)."
     )
+    for err in summary.get("errors", []):
+        lines.append(f"- **Scanner error (gate fails closed):** {md_cell(err)}")
     lines.append("")
     if deduped:
         lines.append("| Scanner | Rule | Type | File | Line | Verified |")
@@ -113,8 +205,9 @@ def render_markdown(summary: dict[str, Any], baseline_file: str) -> str:
         for f in deduped[:50]:
             v = "yes" if f["verified"] else "no"
             lines.append(
-                f"| {f['source']} | `{f['rule']}` | {f['secret_type']} | "
-                f"`{f['file']}` | {f['line']} | {v} |"
+                f"| {md_cell(f['source'])} | `{md_cell(f['rule'])}` | "
+                f"{md_cell(f['secret_type'])} | `{md_cell(f['file'])}` | "
+                f"{md_cell(f['line'])} | {v} |"
             )
         lines.append("")
         lines.append(
@@ -140,6 +233,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--summary-json-out", required=True)
     parser.add_argument("--summary-md-out", required=True)
     parser.add_argument("--outputs-out", required=True, help="Appended to (step outputs).")
+    parser.add_argument("--sarif-out", default=None)
+    parser.add_argument("--gitleaks-exit", default=None)
+    parser.add_argument("--trufflehog-exit", default=None)
     return parser
 
 
@@ -149,14 +245,20 @@ def main() -> int:
     findings = normalize_gitleaks(load_report(Path(args.gitleaks_report)))
     findings += normalize_trufflehog(load_report(Path(args.trufflehog_report)))
     deduped = dedupe(findings)
+    errors = tool_errors(
+        {"gitleaks": args.gitleaks_exit, "trufflehog": args.trufflehog_exit}
+    )
 
-    summary = build_summary_json(deduped)
+    summary = build_summary_json(deduped, errors)
     Path(args.summary_json_out).write_text(json.dumps(summary, indent=2))
     Path(args.summary_md_out).write_text(render_markdown(summary, args.baseline_file))
+    if args.sarif_out:
+        Path(args.sarif_out).write_text(json.dumps(build_sarif(deduped), indent=2))
 
     with Path(args.outputs_out).open("a") as out:
         out.write(f"verified={summary['verified']}\n")
         out.write(f"unverified={summary['unverified']}\n")
+        out.write(f"tool_errors={summary['tool_errors']}\n")
     return 0
 
 

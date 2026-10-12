@@ -33,6 +33,13 @@ on:
         # Canonical default — keep in sync with policies/severity-thresholds.yml
         # (scanners.dependencies.deny_licenses) and policies/allowed-licenses.yml.
         default: 'GPL-3.0,AGPL-3.0,SSPL-1.0'
+      allow_unknown_licenses:
+        description: >-
+          When allow_licenses is set, accept packages whose license cannot be
+          determined (UNKNOWN). Default false: unknown licenses fail an allow-list.
+          Deny-only policies never fail on UNKNOWN.
+        type: boolean
+        default: false
       snyk_enable:
         description: 'Run Snyk Open Source. Requires SNYK_TOKEN secret.'
         type: boolean
@@ -175,15 +182,28 @@ jobs:
         working-directory: ${{ inputs.working_directory }}
         run: |
           npm ci --no-audit --no-fund || npm install --no-audit --no-fund
-          npx --yes license-checker --json --production > licenses.json
+          npx --yes license-checker@25.0.1 --json --production > licenses.json
 
       - name: Extract licenses (pip)
         if: steps.detect.outputs.ecosystem == 'pip'
         working-directory: ${{ inputs.working_directory }}
         run: |
-          pip install --quiet pip-licenses
-          if [ -f requirements.txt ]; then pip install --quiet -r requirements.txt; fi
-          pip-licenses --format=json --with-urls > licenses.json
+          set -euo pipefail
+          # Two venvs: one for the tool, one for the project. Installing both
+          # into the runner's Python counted pip-licenses' own dependencies
+          # (and whatever the runner image ships) as project dependencies.
+          python3 -m venv /tmp/pa-tool
+          /tmp/pa-tool/bin/pip install --quiet 'pip-licenses==5.5.5'
+          python3 -m venv /tmp/pa-target
+          if [ -f requirements.txt ]; then
+            /tmp/pa-target/bin/pip install --quiet -r requirements.txt
+          elif [ -f pyproject.toml ]; then
+            /tmp/pa-target/bin/pip install --quiet .
+          fi
+          # --from=mixed prefers the package's License-Expression/License
+          # metadata and falls back to trove classifiers.
+          /tmp/pa-tool/bin/pip-licenses --python /tmp/pa-target/bin/python \
+            --from=mixed --format=json --with-urls > licenses.json
 
       - name: Extract licenses (go)
         if: steps.detect.outputs.ecosystem == 'go'
@@ -206,13 +226,17 @@ jobs:
         env:
           ALLOW: ${{ inputs.allow_licenses }}
           DENY: ${{ inputs.deny_licenses }}
+          ALLOW_UNKNOWN: ${{ inputs.allow_unknown_licenses }}
           ECOSYSTEM: ${{ steps.detect.outputs.ecosystem }}
         run: |
+          extra=()
+          if [ "$ALLOW_UNKNOWN" = "true" ]; then extra+=(--allow-unknown); fi
           python3 "$GITHUB_WORKSPACE/.pipeline-armor/scripts/evaluate-licenses.py" \
             --licenses-json licenses.json \
             --allow "$ALLOW" \
             --deny "$DENY" \
             --ecosystem "$ECOSYSTEM" \
+            "${extra[@]}" \
             --summary-out licenses-summary.md \
             --outputs-out "$GITHUB_OUTPUT"
           cat licenses-summary.md >> "$GITHUB_STEP_SUMMARY"
