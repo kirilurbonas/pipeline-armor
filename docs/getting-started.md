@@ -34,8 +34,9 @@ can leave that as-is to consume this library upstream. If you've forked
 this repo for internal hardening, search-and-replace
 `kirilurbonas/pipeline-armor` with `<your-org>/pipeline-armor`.
 
-In production, pin to a release tag or commit SHA instead of `@main` —
-see [configuration.md](configuration.md#pinning) for details.
+The examples use `@v1`, which tracks the latest 1.x release. For
+supply-chain-critical workloads pin a commit SHA instead; see
+[configuration.md](configuration.md#pinning).
 
 ## 3. Add secrets
 
@@ -56,7 +57,6 @@ permissions:
   pull-requests: write     # PR comments
   actions: read            # deploy gate reads upstream artifacts
   deployments: write       # deploy gate's environment binding
-  issues: write            # deploy gate notifications
   # Only if you chain reusable-attest-sbom.yml:
   # id-token: write
   # attestations: write
@@ -74,21 +74,30 @@ manual-approval-for-prod is enforced — see [security-gates.md](security-gates.
 
 Open a PR against `main`. You should see, in this order:
 
-1. `secret-scan` runs first and gates everything else.
-2. `sast`, `dependency-review`, `osv-scan` (token-free full-tree CVE
-   scan), and (if applicable) `iac-scan` run in parallel.
-3. `container-scan` runs after `secret-scan` succeeds. Optionally chain
+1. `secret-scan`, `sast`, `dependency-review`, `osv-scan` (token-free
+   full-tree CVE scan), and (if applicable) `iac-scan` run in parallel.
+2. `container-scan` runs after `secret-scan` succeeds, so no image is
+   built from a tree containing a leaked key. Optionally chain
    `reusable-attest-sbom.yml` after it for a signed SBOM attestation
    (requires `id-token: write` + `attestations: write`).
-4. `deploy-gate` runs last, aggregates the results, and either passes
+3. `deploy-gate` runs last, aggregates the results, and either passes
    (allowing your downstream deploy job to proceed) or fails with a
    detailed report in the job summary. Declare the job with
    `if: ${{ always() }}` in the caller workflow so the gate still runs
    when an upstream scan job fails and only its artifact/report is
    available.
 
-Every workflow uploads a SARIF file to the **Security** tab of your
-repository. Findings appear in *Security → Code scanning alerts*.
+SAST, container, IaC and OSV scans upload SARIF to the **Security** tab
+(*Security → Code scanning alerts*). Secret findings are written to
+`secrets.sarif` in the scan's artifact instead.
+
+## 6. Expect a few real findings on first run
+
+Gates fail closed. A scanner that errors fails the gate, unrated Checkov
+checks default to `high`, and unverified secrets block staging and prod.
+See the "What blocks, by default" table in
+[security-gates.md](security-gates.md) and the escape hatches in
+[troubleshooting.md](troubleshooting.md).
 
 ## Troubleshooting
 

@@ -3,8 +3,8 @@
 # -----------------------------------------------------------------------------
 # Copy this file into your application repo at `.github/workflows/pipeline.yml`.
 # It already references the upstream `kirilurbonas/pipeline-armor`; if you've
-# forked this library, swap the org. Replace `@main` with a pinned tag or
-# commit SHA in production for supply-chain hardening.
+# forked this library, swap the org. `@v1` tracks the latest 1.x release;
+# pin a commit SHA instead for supply-chain-critical workloads.
 #
 # The pipeline calls every reusable workflow in pipeline-armor and gates
 # deployment on their aggregate result.
@@ -35,10 +35,10 @@ jobs:
   # Shift-left scans — run in parallel against the source tree.
   # ---------------------------------------------------------------------------
   secret-scan:
-    uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-secret-scan.yml@main
+    uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-secret-scan.yml@v1
 
   sast:
-    uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-sast.yml@main
+    uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-sast.yml@v1
     with:
       language: javascript
       fail_on_severity: high
@@ -46,12 +46,22 @@ jobs:
       SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
 
   dependency-review:
-    uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-dependency-review.yml@main
+    uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-dependency-review.yml@v1
     with:
       fail_on_severity: high
       ecosystem: npm
     secrets:
       SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+  # Token-free full-tree CVE scan of the lockfile (OSV.dev).
+  osv-scan:
+    uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-osv-scan.yml@v1
+
+  # The Dockerfile itself is IaC: Checkov catches missing USER, HEALTHCHECK, etc.
+  iac-scan:
+    uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-iac-scan.yml@v1
+    with:
+      framework: dockerfile
 
   # ---------------------------------------------------------------------------
   # Build & container scan — depends on secret-scan because there's no
@@ -59,7 +69,7 @@ jobs:
   # ---------------------------------------------------------------------------
   container-scan:
     needs: [secret-scan]
-    uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-container-scan.yml@main
+    uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-container-scan.yml@v1
     with:
       image_ref: myapp:${{ github.sha }}
       dockerfile_path: Dockerfile
@@ -70,11 +80,13 @@ jobs:
   # Final gate. Requires every upstream scan to have produced an artifact.
   # ---------------------------------------------------------------------------
   deploy-gate:
-    needs: [sast, container-scan, dependency-review, secret-scan]
-    uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-deploy-gate.yml@main
+    # always(): the gate must still run (and fail closed) when a scan fails.
+    if: ${{ always() }}
+    needs: [sast, container-scan, dependency-review, osv-scan, iac-scan, secret-scan]
+    uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-deploy-gate.yml@v1
     with:
       environment: staging
-      required_scans: sast,container,secrets,dependencies
+      required_scans: sast,container,secrets,dependencies,osv,iac
       notify_slack: false
     secrets:
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

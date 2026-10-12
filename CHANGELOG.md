@@ -6,6 +6,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.3.0] — 2026-10-12
+
 Theme: **truthful gates.** Several gates could report "pass" without
 checking anything. Every fix below fails closed, so **upgrading may turn
 previously-green pipelines red**. Each case is a real finding the gate
@@ -80,6 +82,24 @@ docs/troubleshooting.md.
   closed, and an unknown environment is now a clear error, not a traceback.
 - IaC `sarif_upload` input.
 - OSV gate fixtures; the gate-enforcement job now covers all six scans.
+
+### Changed
+
+- The deploy gate now requests only `contents: read`, `actions: read` and
+  `deployments: write`. It used to also request `pull-requests: write` and
+  `issues: write`, which it never used. The README quick-start didn't grant
+  `issues`, so pipelines copied from it failed at startup. Requesting less
+  is safe for existing callers.
+- Examples pin `@v1` instead of `@main`, declare the gate with
+  `if: ${{ always() }}`, and the app pipelines now include `osv-scan` and a
+  Dockerfile `iac-scan`. The Node example lockfile is bumped past
+  GHSA-jqcg-44mw-7w3h (`proxy-addr` 2.0.8) and two `qs` advisories (6.16.0).
+- Docs truth pass: removed the unbacked SLSA Level 2 badge. Corrected the
+  claims that the Node image is distroless, that secret-scan "gates
+  everything else" (only container-scan depends on it), and that the PR
+  comment carries the gate score (that's in the job summary, artifact and
+  Slack). The architecture diagram now includes OSV. CONTRIBUTING's release
+  steps now match `release.yml`.
 
 ### Security
 

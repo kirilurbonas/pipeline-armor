@@ -10,7 +10,7 @@ commit SHA so a change in this library can't silently alter your gate
 behavior.
 
 ```yaml
-uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-sast.yml@v1.1.0
+uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-sast.yml@v1.3.0
 # or
 uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-sast.yml@5c2f4ab1...
 ```

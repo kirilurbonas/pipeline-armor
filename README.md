@@ -1,8 +1,8 @@
 # pipeline-armor
 
 [![CI Self-Test](https://github.com/kirilurbonas/pipeline-armor/actions/workflows/ci-self-test.yml/badge.svg)](https://github.com/kirilurbonas/pipeline-armor/actions/workflows/ci-self-test.yml)
+[![Scanner Canary](https://github.com/kirilurbonas/pipeline-armor/actions/workflows/scanner-canary.yml/badge.svg)](https://github.com/kirilurbonas/pipeline-armor/actions/workflows/scanner-canary.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![SLSA Level 2](https://img.shields.io/badge/SLSA-Level%202-green)](https://slsa.dev/)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/kirilurbonas/pipeline-armor/badge)](https://scorecard.dev/viewer/?uri=github.com/kirilurbonas/pipeline-armor)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](pyproject.toml)
 
@@ -30,6 +30,10 @@ is the opinionated, batteries-included alternative:
 - **One gate** — a single deploy-gate job aggregates every scan, applies
   environment-specific policy, and either passes the build to your
   deploy step or blocks it with a detailed report.
+- **Fail closed** — a scanner that crashes, exits oddly, or produces no
+  report fails the gate. "0 findings" always means the scan ran and found
+  nothing, and a [canary workflow](.github/workflows/scanner-canary.yml)
+  proves the scanners still detect planted issues.
 - **First-class GitHub integration** — SARIF uploads to the Security
   tab, PR comments via the API, manual approval via Environments.
 
@@ -37,24 +41,27 @@ is the opinionated, batteries-included alternative:
 
 | Workflow | Purpose |
 | --- | --- |
-| [reusable-sast.yml](.github/workflows/reusable-sast.yml) | Snyk Code + Semgrep static analysis with SARIF upload. |
+| [reusable-sast.yml](.github/workflows/reusable-sast.yml) | Snyk Code + Semgrep (`p/default`, `p/secrets`, per-language pack) with SARIF upload. |
 | [reusable-container-scan.yml](.github/workflows/reusable-container-scan.yml) | Trivy image + Dockerfile config scan, CycloneDX SBOM. |
-| [reusable-iac-scan.yml](.github/workflows/reusable-iac-scan.yml) | Checkov for Terraform/CloudFormation/Kubernetes/Dockerfile, with CIS/SOC2/PCI-DSS mapping. |
-| [reusable-secret-scan.yml](.github/workflows/reusable-secret-scan.yml) | Gitleaks + Trufflehog, baseline-aware, verified-only by default. |
-| [reusable-dependency-review.yml](.github/workflows/reusable-dependency-review.yml) | GitHub native dep review + Snyk OSS + SPDX license enforcement. |
+| [reusable-iac-scan.yml](.github/workflows/reusable-iac-scan.yml) | Checkov for Terraform/CloudFormation/Kubernetes/Dockerfile, with a [severity map](policies/checkov-severity.json) (Checkov OSS rates nothing) and CIS/SOC2/PCI-DSS mapping. |
+| [reusable-secret-scan.yml](.github/workflows/reusable-secret-scan.yml) | Gitleaks + Trufflehog over git history, baseline-aware. Verified secrets are critical; unverified ones are high. |
+| [reusable-dependency-review.yml](.github/workflows/reusable-dependency-review.yml) | GitHub native dep review + Snyk OSS + SPDX license enforcement (expressions and pip classifiers understood). |
 | [reusable-osv-scan.yml](.github/workflows/reusable-osv-scan.yml) | Token-free full-tree dependency CVE scan via OSV-Scanner / OSV.dev. |
 | [reusable-attest-sbom.yml](.github/workflows/reusable-attest-sbom.yml) | Opt-in signed attestation over the container-scan SBOM. |
 | [reusable-deploy-gate.yml](.github/workflows/reusable-deploy-gate.yml) | Aggregates every scan, applies env policy, gates the deploy. |
 | [ci-self-test.yml](.github/workflows/ci-self-test.yml) | Dogfoods the published helper scripts and core reusable workflows on every PR to this repo. |
+| [scanner-canary.yml](.github/workflows/scanner-canary.yml) | Scans deliberately vulnerable code in [canary/](canary/) on every PR and weekly; fails if expected findings disappear. |
 
-Nine unit-tested helper scripts under [scripts/](scripts/) do the parsing
-and policy work: Trivy, Checkov, Snyk, OSV, and SAST-SARIF report parsers,
-secret-finding merge/dedupe (with a redaction guarantee), SPDX license
-evaluation, SBOM summaries, and the deploy-gate evaluator. Policy files
-under [policies/](policies/) centrally manage severity thresholds — the
-deploy gate reads
-[severity-thresholds.yml](policies/severity-thresholds.yml) at runtime —
-and license rules.
+Unit-tested, stdlib-only helper scripts under [scripts/](scripts/) do the
+parsing and policy work: Trivy, Checkov, Snyk, OSV, and SAST-SARIF report
+parsers, secret-finding merge/dedupe (with a redaction guarantee), SPDX
+license evaluation, SBOM summaries, the deploy-gate evaluator, and a
+scanner-version currency check. Tests include real captured scanner
+output. Policy files under [policies/](policies/) hold the environment
+thresholds the deploy gate reads at runtime
+([severity-thresholds.yml](policies/severity-thresholds.yml), which you can
+replace with your own via `policy_file`) and the Checkov severity ratings
+([checkov-severity.json](policies/checkov-severity.json)).
 
 ## Quick start
 
@@ -105,21 +112,26 @@ full walkthrough.
 still aggregates artifacts and emits a final decision when an upstream
 scan job fails.
 
+Gates fail closed, so expect a few real findings on the first run. See
+[what blocks, by default](docs/security-gates.md#what-blocks-by-default)
+and the escape hatches in [troubleshooting](docs/troubleshooting.md).
+
 ## See it in action
 
 Every scan renders a job-summary table and a single, self-updating PR
-comment — severity counts, top findings, license distribution, and the
-final gate decision with a 0–100 security score.
+comment with severity counts, top findings and license distribution. The
+deploy gate writes its decision and 0–100 security score to the job
+summary, a `deploy-gate-report` artifact, and (optionally) Slack.
 
 <!-- TODO: screenshot of a job summary + PR comment from a ci-self-test run.
      Capture from https://github.com/kirilurbonas/pipeline-armor/actions -->
 
 ## Examples
 
-Three runnable example apps live under [examples/](examples/). Each is a
-complete, real-world consumer pipeline:
+Example consumers live under [examples/](examples/). The app and
+Terraform examples each ship a complete `pipeline.yml`:
 
-- [examples/nodejs-app](examples/nodejs-app) — Express service, distroless image.
+- [examples/nodejs-app](examples/nodejs-app) — Express service, Alpine image with npm removed, non-root.
 - [examples/python-app](examples/python-app) — FastAPI service, slim-bookworm image.
 - [examples/terraform-infra](examples/terraform-infra) — hardened S3 + KMS module.
 - [examples/k8s-manifests](examples/k8s-manifests) — hardened Deployment + Service pair for the kubernetes IaC scan.
@@ -129,30 +141,24 @@ complete, real-world consumer pipeline:
 ```
    Developer push / PR
             │
-            ▼
-   ┌─────────────────────┐
-   │   secret-scan       │ ◄── runs first, gates everything else
-   └─────────────────────┘
-            │
-            ├──► sast            ─┐
-            ├──► dependency-rev  ─┤
-            ├──► iac-scan        ─┤   each writes SARIF + JSON
-            └──► container-scan  ─┘   to the Security tab + artifacts
-                                  │
-                                  ▼
-                       ┌──────────────────┐
-                       │   deploy-gate    │
-                       │  - aggregates    │
-                       │  - applies env   │
-                       │    policy        │
-                       │  - manual approval│
-                       │    via GitHub    │
-                       │    Environments  │
-                       └──────────────────┘
-                                  │
-                            pass │ fail
-                                  ▼
-                            your deploy job
+            ├──► secret-scan ──► container-scan ──┐   no image is built from
+            ├──► sast ────────────────────────────┤   a tree with a leaked key
+            ├──► dependency-review ───────────────┤
+            ├──► osv-scan ────────────────────────┤   each uploads counts JSON
+            └──► iac-scan ────────────────────────┤   (+ SARIF) as an artifact
+                                                  ▼
+                                   ┌──────────────────────────────┐
+                                   │ deploy-gate  (if: always())  │
+                                   │  - aggregates every artifact │
+                                   │  - fails closed on missing   │
+                                   │    evidence or tool errors   │
+                                   │  - applies env policy        │
+                                   │  - manual approval via       │
+                                   │    GitHub Environments       │
+                                   └──────────────────────────────┘
+                                                  │ pass
+                                                  ▼
+                                           your deploy job
 ```
 
 ## Documentation
@@ -182,12 +188,13 @@ Releases follow [SemVer](https://semver.org/). Major-version tags
 teams. For supply-chain-critical workloads, pin to a commit SHA:
 
 ```yaml
-uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-sast.yml@<commit-sha>  # v1.1.0
+uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-sast.yml@<commit-sha>  # v1.3.0
 ```
 
 The library practices what it preaches: every third-party action inside
-these workflows is pinned to a full commit SHA, and every scanner binary
-downloaded at runtime is version-pinned and SHA256-verified.
+these workflows is pinned to a full commit SHA, every scanner binary
+downloaded at runtime is version-pinned and SHA256-verified, and every
+pip/npm-installed tool is version-pinned.
 
 ## Contributing
 
@@ -197,6 +204,7 @@ changes are caught quickly. See the contribution checklist:
 
 - [ ] Workflow YAML passes `actionlint` and `yamllint`.
 - [ ] Any new helper script has a smoke test in `ci-self-test.yml`.
+- [ ] Scanner changes keep `scanner-canary.yml` green (planted issues still found).
 - [ ] Docs updated alongside any new input or output.
 - [ ] Example pipelines still resolve cleanly.
 

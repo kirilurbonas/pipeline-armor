@@ -26,10 +26,10 @@ permissions:
 
 jobs:
   secret-scan:
-    uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-secret-scan.yml@main
+    uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-secret-scan.yml@v1
 
   iac-scan:
-    uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-iac-scan.yml@main
+    uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-iac-scan.yml@v1
     with:
       iac_directory: .
       framework: terraform
@@ -41,8 +41,10 @@ jobs:
   # Optional: a `terraform plan` job that posts the plan diff as a PR comment.
   # Wire deploy-gate to it just like the app pipelines do.
   deploy-gate:
+    # always(): the gate must still run (and fail closed) when a scan fails.
+    if: ${{ always() }}
     needs: [iac-scan, secret-scan]
-    uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-deploy-gate.yml@main
+    uses: kirilurbonas/pipeline-armor/.github/workflows/reusable-deploy-gate.yml@v1
     with:
       environment: staging
       required_scans: iac,secrets

@@ -65,12 +65,14 @@ concurrency:
   group: deploy-gate-${{ github.workflow }}-${{ inputs.environment }}-${{ github.ref }}
   cancel-in-progress: false
 
+# Only what the gate uses: read upstream artifacts (actions: read) and bind
+# the job to a GitHub Environment (deployments: write). It used to also
+# request pull-requests/issues write, which it never used and which the
+# README quick-start didn't grant, so copied pipelines failed at startup.
 permissions:
   contents: read
   actions: read
   deployments: write
-  pull-requests: write
-  issues: write
 
 jobs:
   gate:

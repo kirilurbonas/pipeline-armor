@@ -60,13 +60,15 @@ To trigger the full self-test, open a PR — the suite runs automatically.
 
 ## Release process
 
-1. Update `CHANGELOG.md` — move `## Unreleased` entries under a new
-   version heading with today's date.
+1. Update `CHANGELOG.md`: move the `## [Unreleased]` entries under a new
+   `## [X.Y.Z] — YYYY-MM-DD` heading.
 2. Tag the merge commit: `git tag -s vX.Y.Z -m 'Release vX.Y.Z'` if you
    have a signing key configured, otherwise `git tag -a`.
 3. Push the tag: `git push origin vX.Y.Z`.
-4. Move the major-version tag forward: `git tag -f vX && git push -f origin vX`.
-5. Create a GitHub Release from the tag with the changelog excerpt.
+
+[`release.yml`](.github/workflows/release.yml) does the rest. It creates
+the GitHub Release from that CHANGELOG section (and fails if the section is
+missing), and it moves the floating major tag (`vX`) to the new release.
 
 ## Code of conduct
 

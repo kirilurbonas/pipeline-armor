@@ -30,9 +30,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:$PATH"
 
-# Create a dedicated, low-privilege user. Distroless would be nicer but
-# uvicorn's stdlib imports are easier to reason about on a real Debian
-# slim — the trade-off is documented in docs/security-gates.md.
+# Create a dedicated, low-privilege user. Distroless would shrink the
+# attack surface further, but uvicorn's stdlib imports are easier to reason
+# about on a real Debian slim image.
 RUN groupadd --system app && useradd --system --gid app --shell /usr/sbin/nologin app
 
 COPY --from=builder /opt/venv /opt/venv
