@@ -26,6 +26,7 @@
     "CKV_DOCKER_7": "low",
     "CKV_K8S_8": "low",
     "CKV_K8S_9": "low",
+    "CKV_K8S_15": "low",
     "CKV_K8S_16": "critical",
     "CKV_K8S_17": "high",
     "CKV_K8S_19": "high",
@@ -39,7 +40,8 @@
     "CKV2_AWS_5": "low",
     "CKV2_AWS_6": "high",
     "CKV2_AWS_61": "low",
-    "CKV2_AWS_62": "low"
+    "CKV2_AWS_62": "low",
+    "CKV2_K8S_6": "medium"
   },
   "compliance": {
     "CKV_AWS_18": [
