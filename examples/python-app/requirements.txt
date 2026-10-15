@@ -1,5 +1,5 @@
 # Runtime dependencies, pinned. Update these via `pip-compile` (pip-tools).
-fastapi==0.136.3
+fastapi==0.137.0
 uvicorn[standard]==0.48.0
 pydantic==2.13.4
 structlog==25.5.0
